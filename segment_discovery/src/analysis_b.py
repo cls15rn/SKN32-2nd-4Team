@@ -8,6 +8,8 @@
   (분석B는 세그먼트 안에서 또 fold를 나누므로 분석A보다 표본부족 위험이 큼 - 필수 단계)
 """
 from typing import Sequence
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,13 +19,15 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 
-CATEGORICAL_COLS = [
-    "gender", "Partner", "Dependents", "PhoneService", "MultipleLines",
-    "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection",
-    "TechSupport", "StreamingTV", "StreamingMovies", "Contract",
-    "PaperlessBilling", "PaymentMethod",
-]
-NUMERIC_COLS = ["SeniorCitizen", "MonthlyCharges"]
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+from columns import ANALYSIS_B_NUMERIC_COLS, CATEGORICAL_COLS  # noqa: E402
+
+# ⚠️ 컬럼 목록을 여기서 다시 정의하지 말 것 - shared/columns.py 가 단일 출처.
+# 이 NUMERIC_COLS는 churn_prediction의 스케일링 대상(SCALING_NUMERIC_COLS)과
+# 다른, 분석B 모델 입력 전용 목록이다 - 과거에 이름은 같은데 내용이 다른
+# 두 NUMERIC_COLS가 따로 존재했던 버그를 막기 위해 ANALYSIS_B_NUMERIC_COLS로
+# 명시적으로 구분해서 가져온다.
+NUMERIC_COLS = ANALYSIS_B_NUMERIC_COLS
 
 
 def _encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:

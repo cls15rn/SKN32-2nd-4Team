@@ -13,6 +13,7 @@ feature_cols_3  (3단계용, segment_* 포함)
 FeatureTransformer 객체 하나로 묶어 저장/로드한다.
 """
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,14 +21,13 @@ import joblib
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-CATEGORICAL_COLS = [
-    "gender", "Partner", "Dependents", "PhoneService", "MultipleLines",
-    "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection",
-    "TechSupport", "StreamingTV", "StreamingMovies", "Contract",
-    "PaperlessBilling", "PaymentMethod",
-]
-BINARY_MAP_COLS = ["Partner", "Dependents", "PhoneService", "PaperlessBilling"]
-NUMERIC_COLS = ["tenure", "MonthlyCharges", "TotalCharges"]
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+from columns import BINARY_MAP_COLS, CATEGORICAL_COLS, SCALING_NUMERIC_COLS  # noqa: E402
+from data_loader import clean_raw_data  # noqa: E402
+
+# ⚠️ 컬럼 목록을 여기서 다시 정의하지 말 것 - shared/columns.py 가 단일 출처.
+# 이 파일에서 쓰는 "연속형 컬럼"은 스케일링 대상이므로 SCALING_NUMERIC_COLS.
+NUMERIC_COLS = SCALING_NUMERIC_COLS
 
 
 def load_segment_rules(rules_path: str | Path) -> dict:
@@ -90,10 +90,17 @@ class FeatureTransformer:
         새 고객 데이터(df_raw, 원본 컬럼 그대로)를 학습 때와 동일한 규칙으로 변환.
         추론(predict.py)에서 쓰는 진입점 - 절대 새로 fit 하지 않고 저장된 규칙만 적용.
 
+        ⚠️ df_raw는 "원본 그대로"일 수 있으므로(train.py처럼 run_preprocessing을
+        거치지 않았을 수 있음), 분석A/B/Q·재학습과 똑같은 공통 전처리 관문
+        (shared.clean_raw_data - 자료형 정리 + No-service 통합)을 여기서 직접
+        한 번 더 보장한다. 세 곳이 각자 다른 전처리 코드를 갖고 있으면 한쪽만
+        고치고 다른 쪽을 놓치는 버그가 재발할 수 있어, 반드시 같은 함수를 공유한다.
+
         Returns
         -------
         dict with keys: X_tree_12, X_tree_3, X_linear_12, X_linear_3, df_with_labels
         """
+        df_raw = clean_raw_data(df_raw)
         df = apply_segment_label(df_raw, self.boundaries)
         df = apply_risk_count(df, self.risk_attribute_values)
 

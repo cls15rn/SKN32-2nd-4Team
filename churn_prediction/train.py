@@ -1,5 +1,5 @@
 """
-churn_prediction/train.py  (구 app.py)
+churn_prediction/train.py
 
 segment_discovery 가 만든 segment_rules.json 을 읽어 1·2·3단계 예측모델을
 학습/평가하고, 모델과 FeatureTransformer를 저장한다.
@@ -17,13 +17,23 @@ segment_rules.json 파일(인터페이스)만 의존한다.
 재학습하지 말고 항상 누적 전체 데이터로 학습할 것. (predict.py 는 이 묶음과
 무관하게 독립적으로 자유로운 주기 - 학습이 없어 데이터 양과 무관하게 안정적)
 
+[실무 구조] 결과는 outputs/versions/{timestamp}/ 에 버전별로 보관되고,
+outputs/latest/ 에는 그 중 가장 최근 버전이 그대로 복사된다.
+predict.py 는 항상 outputs/latest/ 만 본다 - 과거 버전이 필요하면
+outputs/versions/ 에서 직접 꺼내 쓸 것. 매 실행마다 outputs/run_history.csv
+에 한 줄씩(시각, 입력 데이터, 행수, 성능지표 요약)이 누적되어, "언제 누가
+어떤 데이터로 재학습했는지" 추적할 수 있다.
+
 사용법:
     cd churn_prediction
     python train.py --data ../data/WA_FnUseC_TelcoCustomerChurn.csv \
                      --rules ../segment_discovery/outputs/segment_rules.json
 """
 import argparse
+import csv
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import joblib
@@ -42,11 +52,35 @@ from preprocessing import run_preprocessing  # noqa: E402
 from train_models import train_all_stages  # noqa: E402
 
 OUTPUT_DIR = Path(__file__).parent / "outputs"
+VERSIONS_DIR = OUTPUT_DIR / "versions"
+LATEST_DIR = OUTPUT_DIR / "latest"
+RUN_HISTORY_PATH = OUTPUT_DIR / "run_history.csv"
+
+DEFAULT_DATA_PATH = Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
+DEFAULT_RULES_PATH = (
+    Path(__file__).parent.parent / "segment_discovery" / "outputs" / "segment_rules.json"
+)
+
+
+def append_run_history(row: dict) -> None:
+    """매 실행마다 한 줄씩 누적 기록 - 언제 누가 어떤 데이터로 재학습했는지 추적용"""
+    RUN_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = RUN_HISTORY_PATH.exists()
+    with open(RUN_HISTORY_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def main(csv_path: str, rules_path: str):
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    version_dir = VERSIONS_DIR / run_timestamp
+
+    print(f"[실행 ID] {run_timestamp}")
     print("[1/6] 전처리 (Train/Test 분할)")
     df_train, df_test = run_preprocessing(csv_path)
+    print(f"      train={len(df_train)}건, test={len(df_test)}건")
 
     print("[2/6] segment_rules.json 로드 및 피처 변환규칙 fit (feature_cols_12 / _3 분기)")
     rules = load_segment_rules(rules_path)
@@ -80,33 +114,59 @@ def main(csv_path: str, rules_path: str):
     fn_cost = estimate_fn_cost(inputs["df_train_raw"])
     print(f"      FN 비용 근사 추정: {fn_cost:.0f} (참고용, FP비용은 추정 불가)")
 
-    print("\n[5/6] 모델 + 변환규칙(FeatureTransformer) 저장")
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"\n[5/6] 버전 저장: outputs/versions/{run_timestamp}/")
+    version_dir.mkdir(parents=True, exist_ok=True)
 
-    # 메인 모델(3단계) 저장
-    joblib.dump(stage_results["stage3"].model, OUTPUT_DIR / "model.pkl")
+    # 메인 모델(3단계) + 변환규칙(FeatureTransformer) 저장
+    # ⚠️ FeatureTransformer가 없으면 predict.py가 학습 때와 다른 방식으로
+    # 인코딩하게 되어 모델이 기대하는 피처 형식과 어긋날 수 있다.
+    joblib.dump(stage_results["stage3"].model, version_dir / "model.pkl")
+    transformer.save(version_dir / "feature_transformer.pkl")
 
-    # ⚠️ predict.py 가 재사용할 변환규칙(더미컬럼 목록 + 스케일러)을 함께 저장.
-    # 이게 없으면 추론 시 새 데이터를 학습 때와 다른 방식으로 인코딩하게 되어
-    # 모델이 기대하는 피처 형식과 어긋날 수 있다.
-    transformer.save(OUTPUT_DIR / "feature_transformer.pkl")
-
-    print("\n[6/6] 결과 저장")
     df_test_result = inputs["df_test_raw"].copy()
     df_test_result["이탈확률"] = stage_results["stage3"].model.predict_proba(
         inputs["X_test_tree_3"]
     )[:, 1]
-    df_test_result.to_csv(OUTPUT_DIR / "predictions.csv", index=False)
-    metrics_df.to_csv(OUTPUT_DIR / "stage_metrics.csv")
+    df_test_result.to_csv(version_dir / "predictions.csv", index=False)
+    metrics_df.to_csv(version_dir / "stage_metrics.csv")
+
+    main_metrics = metrics_df.loc["3단계_XGBoost_세그먼트포함"]
+    metadata = {
+        "run_timestamp": run_timestamp,
+        "data_path": str(Path(csv_path).resolve()),
+        "rules_path": str(Path(rules_path).resolve()),
+        "n_train": len(df_train),
+        "n_test": len(df_test),
+        "main_model_f2": round(float(main_metrics["f2"]), 4),
+        "main_model_auc": round(float(main_metrics["model_auc"]), 4),
+        "recommended_threshold": round(threshold, 4),
+        "fn_cost_estimate": round(fn_cost, 0),
+    }
+    with open(version_dir / "metadata.json", "w", encoding="utf-8") as f:
+        import json
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    print(f"\n[6/6] latest 갱신: outputs/latest/ <- versions/{run_timestamp}/")
+    if LATEST_DIR.exists():
+        shutil.rmtree(LATEST_DIR)
+    shutil.copytree(version_dir, LATEST_DIR)
+
+    append_run_history({
+        "run_timestamp": run_timestamp,
+        "data_path": metadata["data_path"],
+        "n_train": metadata["n_train"],
+        "n_test": metadata["n_test"],
+        "main_model_f2": metadata["main_model_f2"],
+        "main_model_auc": metadata["main_model_auc"],
+        "f1_increment_vs_stage2": round(contribution["f1_increment"], 4),
+    })
 
     print(f"      model.pkl, feature_transformer.pkl, predictions.csv, "
-          f"stage_metrics.csv -> {OUTPUT_DIR}")
+          f"stage_metrics.csv, metadata.json")
+    print(f"      -> outputs/versions/{run_timestamp}/  (이번 버전 보관)")
+    print(f"      -> outputs/latest/                    (predict.py 가 보는 위치)")
+    print(f"      -> outputs/run_history.csv             (실행 기록 누적)")
 
-
-DEFAULT_DATA_PATH = Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
-DEFAULT_RULES_PATH = (
-    Path(__file__).parent.parent / "segment_discovery" / "outputs" / "segment_rules.json"
-)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="예측모델 1·2·3단계 재학습")

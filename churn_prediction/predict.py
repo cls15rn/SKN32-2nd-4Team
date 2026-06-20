@@ -12,6 +12,10 @@ churn_prediction/predict.py
 호출하는 쪽(사람, 스케줄러, 추후 webapp)이 언제 부르든 그 순간의
 입력 데이터로 즉시 답을 준다.
 
+[실무 구조] 모델/변환규칙은 항상 outputs/latest/ 에서 읽는다 (train.py 가
+가장 최근 버전을 그곳에 복사해둠). 과거 특정 버전을 쓰고 싶으면 --model,
+--transformer 로 outputs/versions/{timestamp}/ 안의 파일을 직접 지정할 것.
+
 입력 데이터는 원본과 동일한 컬럼 구조(customerID, tenure, Contract 등)를
 가진 CSV면 된다 - 신규 가입자든, 기존 고객의 갱신된 정보든 상관없다.
 전체 데이터의 일부 범위(예: tenure 0~5개월만, 또는 특정 segment만)를 미리
@@ -25,12 +29,14 @@ churn_prediction/predict.py
 고객들"처럼 경과월 구간으로만 범위를 나눌 수 있다. 별도의 날짜 컬럼을
 추가할 필요는 없다 - 이미 있는 tenure 컬럼으로 충분하다.
 
+[신규 데이터가 아직 없을 때] --data 를 지정하지 않고 그냥 실행(또는 VSCode
+실행버튼)하면, data/new_customers.csv 를 먼저 찾는다. 그 파일이 없으면
+분석A/B/Q가 썼던 원본 데이터로 자동 대체해서 "데모 모드"로 실행한다 -
+신규 데이터가 아니라 동작 확인용이라는 점을 출력에 명확히 표시한다.
+
 사용법:
     cd churn_prediction
-    python predict.py --data ../data/new_customers.csv \
-                       --model outputs/model.pkl \
-                       --transformer outputs/feature_transformer.pkl \
-                       --output outputs/latest_predictions.csv
+    python predict.py --data ../data/new_customers.csv
 """
 import argparse
 import sys
@@ -43,9 +49,15 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from feature_engineering import FeatureTransformer  # noqa: E402
 
-DEFAULT_MODEL_PATH = Path(__file__).parent / "outputs" / "model.pkl"
-DEFAULT_TRANSFORMER_PATH = Path(__file__).parent / "outputs" / "feature_transformer.pkl"
+LATEST_DIR = Path(__file__).parent / "outputs" / "latest"
+DEFAULT_MODEL_PATH = LATEST_DIR / "model.pkl"
+DEFAULT_TRANSFORMER_PATH = LATEST_DIR / "feature_transformer.pkl"
 DEFAULT_OUTPUT_PATH = Path(__file__).parent / "outputs" / "latest_predictions.csv"
+
+DEFAULT_NEW_DATA_PATH = Path(__file__).parent.parent / "data" / "new_customers.csv"
+DEMO_FALLBACK_DATA_PATH = (
+    Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
+)
 
 
 def predict(
@@ -70,7 +82,50 @@ def predict(
     return result
 
 
-def main(csv_path: str, model_path: str, transformer_path: str, output_path: str):
+def resolve_input_path(requested_path: str, was_explicitly_set: bool) -> tuple[Path, bool]:
+    """
+    추론 대상 경로를 결정한다.
+
+    Returns
+    -------
+    path : 실제로 사용할 경로
+    is_demo : True면 신규 데이터가 없어 원본 데이터로 대체한 "데모 모드"
+    """
+    path = Path(requested_path)
+    if path.exists():
+        return path, False
+
+    if was_explicitly_set:
+        # 사용자가 --data 로 명시한 경로인데 없으면, 조용히 대체하지 않고 바로 알려준다.
+        raise FileNotFoundError(
+            f"지정한 추론 대상 파일이 없습니다: {path}\n"
+            f"경로를 다시 확인해주세요."
+        )
+
+    if DEMO_FALLBACK_DATA_PATH.exists():
+        return DEMO_FALLBACK_DATA_PATH, True
+
+    raise FileNotFoundError(
+        f"추론 대상 파일이 없고, 데모용 원본 데이터({DEMO_FALLBACK_DATA_PATH})도 없습니다.\n"
+        f"새 고객 데이터를 {DEFAULT_NEW_DATA_PATH} 에 두거나, --data 로 경로를 지정하세요."
+    )
+
+
+def main(csv_path: str, model_path: str, transformer_path: str, output_path: str, is_demo: bool):
+    if is_demo:
+        print(
+            "[데모 모드] data/new_customers.csv 가 없어 분석A/B/Q가 쓴 원본 데이터로 "
+            "동작을 확인합니다.\n"
+            "            실제 신규 고객 데이터가 준비되면 data/new_customers.csv 에 "
+            "두고 다시 실행하세요.\n"
+        )
+    if not Path(model_path).exists() or not Path(transformer_path).exists():
+        print(
+            f"[안내] 학습된 모델이 없습니다: {model_path}\n"
+            f"       먼저 train.py 를 실행해 모델을 만들어두세요."
+        )
+        raise SystemExit(1)
+
     print(f"[1/2] 추론 대상 데이터 로드: {csv_path}")
     df_raw = pd.read_csv(csv_path)
     print(f"      {len(df_raw)}건")
@@ -85,28 +140,32 @@ def main(csv_path: str, model_path: str, transformer_path: str, output_path: str
     print(f"      저장 완료: {output_path}")
 
 
-DEFAULT_NEW_DATA_PATH = Path(__file__).parent.parent / "data" / "new_customers.csv"
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="저장된 모델로 즉시 추론 (학습 없음)")
     parser.add_argument(
-        "--data", default=str(DEFAULT_NEW_DATA_PATH),
-        help=f"추론 대상 고객 CSV 경로 (기본값: {DEFAULT_NEW_DATA_PATH})",
+        "--data", default=None,
+        help=f"추론 대상 고객 CSV 경로 (기본값: {DEFAULT_NEW_DATA_PATH}, "
+             f"없으면 원본 데이터로 데모 실행)",
     )
-    parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH), help="model.pkl 경로")
+    parser.add_argument(
+        "--model", default=str(DEFAULT_MODEL_PATH),
+        help=f"model.pkl 경로 (기본값: outputs/latest/model.pkl)",
+    )
     parser.add_argument(
         "--transformer", default=str(DEFAULT_TRANSFORMER_PATH),
-        help="feature_transformer.pkl 경로",
+        help="feature_transformer.pkl 경로 (기본값: outputs/latest/feature_transformer.pkl)",
     )
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH), help="결과 저장 경로")
     args = parser.parse_args()
 
-    if not Path(args.data).exists():
-        print(
-            f"[안내] 추론 대상 파일이 없습니다: {args.data}\n"
-            f"       새 고객 데이터를 이 경로에 두거나, --data 로 다른 경로를 지정하세요.\n"
-            f"       (VSCode 실행버튼으로 바로 돌려보려면, data/new_customers.csv 를 만들어두세요)"
-        )
+    was_explicitly_set = args.data is not None
+    requested = args.data if was_explicitly_set else str(DEFAULT_NEW_DATA_PATH)
+
+    try:
+        resolved_path, is_demo = resolve_input_path(requested, was_explicitly_set)
+    except FileNotFoundError as e:
+        print(f"[오류] {e}")
         raise SystemExit(1)
-    print(f"[안내] 추론 대상: {args.data}\n")
-    main(args.data, args.model, args.transformer, args.output)
+
+    print(f"[안내] 추론 대상: {resolved_path}\n")
+    main(str(resolved_path), args.model, args.transformer, args.output, is_demo)

@@ -23,7 +23,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from analysis_b import CATEGORICAL_COLS, NUMERIC_COLS
+from analysis_b import CATEGORICAL_COLS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,14 @@ def run_kmeans_exploration(
     for col in CATEGORICAL_COLS:
         df_enc[col] = LabelEncoder().fit_transform(df_enc[col].astype(str))
 
-    features = CATEGORICAL_COLS + NUMERIC_COLS + ["tenure", "TotalCharges"]
+    # ⚠️ "tenure+전체속성"이라는 docstring 의도를 코드로 명시적으로 보장.
+    # 이전에는 analysis_b.NUMERIC_COLS(분석B 전용, SeniorCitizen+MonthlyCharges
+    # 라는 작은 부분집합)를 가져다 썼는데, 우연히 tenure/TotalCharges를 더하면
+    # 전체 컬럼과 일치했을 뿐 - analysis_b의 입력 목록이 바뀌면 여기 K-means
+    # 피처도 의도와 다르게 같이 바뀌는 위험이 있었다. 여기서 직접
+    # "SeniorCitizen, MonthlyCharges, tenure, TotalCharges"를 명시한다.
+    other_numeric_cols = ["SeniorCitizen", "MonthlyCharges", "tenure", "TotalCharges"]
+    features = CATEGORICAL_COLS + other_numeric_cols
     features = [f for f in features if f in df_enc.columns]
     X_scaled = StandardScaler().fit_transform(df_enc[features])
 
