@@ -97,9 +97,16 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
     return rules
 
 
+DEFAULT_DATA_PATH = Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="분석A/B/서브트랙Q 실행")
-    parser.add_argument("--data", required=True, help="원본 CSV 경로")
+    parser.add_argument(
+        "--data", default=str(DEFAULT_DATA_PATH),
+        help=f"원본 CSV 경로 (기본값: {DEFAULT_DATA_PATH})",
+    )
     parser.add_argument("--output", default=str(OUTPUT_PATH), help="결과 json 저장 경로")
     args = parser.parse_args()
+    # VSCode 실행버튼처럼 인자 없이 실행될 때를 위한 안내
+    print(f"[안내] 데이터 경로: {args.data}\n")
     main(args.data, Path(args.output))

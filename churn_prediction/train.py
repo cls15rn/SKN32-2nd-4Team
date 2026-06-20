@@ -103,12 +103,21 @@ def main(csv_path: str, rules_path: str):
           f"stage_metrics.csv -> {OUTPUT_DIR}")
 
 
+DEFAULT_DATA_PATH = Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
+DEFAULT_RULES_PATH = (
+    Path(__file__).parent.parent / "segment_discovery" / "outputs" / "segment_rules.json"
+)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="예측모델 1·2·3단계 재학습")
-    parser.add_argument("--data", required=True, help="원본 CSV 경로 (재학습용 데이터)")
     parser.add_argument(
-        "--rules", required=True,
-        help="segment_discovery/outputs/segment_rules.json 경로",
+        "--data", default=str(DEFAULT_DATA_PATH),
+        help=f"원본 CSV 경로 (재학습용 데이터, 기본값: {DEFAULT_DATA_PATH})",
+    )
+    parser.add_argument(
+        "--rules", default=str(DEFAULT_RULES_PATH),
+        help=f"segment_discovery/outputs/segment_rules.json 경로 (기본값: {DEFAULT_RULES_PATH})",
     )
     args = parser.parse_args()
+    print(f"[안내] 데이터: {args.data}\n       규칙: {args.rules}\n")
     main(args.data, args.rules)

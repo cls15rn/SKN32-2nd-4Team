@@ -14,6 +14,16 @@ churn_prediction/predict.py
 
 입력 데이터는 원본과 동일한 컬럼 구조(customerID, tenure, Contract 등)를
 가진 CSV면 된다 - 신규 가입자든, 기존 고객의 갱신된 정보든 상관없다.
+전체 데이터의 일부 범위(예: tenure 0~5개월만, 또는 특정 segment만)를 미리
+필터링해서 넣어도 문제없이 동작한다 - 한 행씩 독립적으로 변환/추론하므로
+입력 범위와 무관하게 항상 안전하다.
+
+⚠️ "기간(월) 단위로 범위를 나눠 본다"는 게 의미를 가지려면, 날짜/수집시점
+컬럼이 아니라 tenure(가입 후 경과월)를 기준으로 나눠야 한다. 이 데이터는
+절대 가입일/수집일이 없는 스냅샷 데이터라(기획_메모.md 2.2 참조), "2026년
+5월에 가입한 고객" 같은 절대 시점 필터링은 할 수 없고, "tenure 0~5개월인
+고객들"처럼 경과월 구간으로만 범위를 나눌 수 있다. 별도의 날짜 컬럼을
+추가할 필요는 없다 - 이미 있는 tenure 컬럼으로 충분하다.
 
 사용법:
     cd churn_prediction
@@ -75,9 +85,14 @@ def main(csv_path: str, model_path: str, transformer_path: str, output_path: str
     print(f"      저장 완료: {output_path}")
 
 
+DEFAULT_NEW_DATA_PATH = Path(__file__).parent.parent / "data" / "new_customers.csv"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="저장된 모델로 즉시 추론 (학습 없음)")
-    parser.add_argument("--data", required=True, help="추론 대상 고객 CSV 경로")
+    parser.add_argument(
+        "--data", default=str(DEFAULT_NEW_DATA_PATH),
+        help=f"추론 대상 고객 CSV 경로 (기본값: {DEFAULT_NEW_DATA_PATH})",
+    )
     parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH), help="model.pkl 경로")
     parser.add_argument(
         "--transformer", default=str(DEFAULT_TRANSFORMER_PATH),
@@ -85,4 +100,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH), help="결과 저장 경로")
     args = parser.parse_args()
+
+    if not Path(args.data).exists():
+        print(
+            f"[안내] 추론 대상 파일이 없습니다: {args.data}\n"
+            f"       새 고객 데이터를 이 경로에 두거나, --data 로 다른 경로를 지정하세요.\n"
+            f"       (VSCode 실행버튼으로 바로 돌려보려면, data/new_customers.csv 를 만들어두세요)"
+        )
+        raise SystemExit(1)
+    print(f"[안내] 추론 대상: {args.data}\n")
     main(args.data, args.model, args.transformer, args.output)
