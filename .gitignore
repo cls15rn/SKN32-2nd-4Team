@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pkl
+.DS_Store
+Thumbs.db
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# 코드 실행으로 재생성되는 결과물 (segment_rules.json은 두 패키지를 잇는
+# 인터페이스이므로 예시용으로 1개는 git에 남겨두는 것을 권장 - 필요시 force add)
+churn_prediction/outputs/*
+!churn_prediction/outputs/.gitkeep

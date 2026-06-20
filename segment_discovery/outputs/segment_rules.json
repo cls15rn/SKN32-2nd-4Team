@@ -1,0 +1,83 @@
+{
+  "analysis_a": {
+    "boundaries": [
+      10.5,
+      22.5,
+      54.5
+    ],
+    "alpha": 0.0010338016841760556,
+    "rf_agreement": "True",
+    "segment_only_auc": 0.7209827237879227,
+    "p_value": 0.0,
+    "ci_low": 0.7131311112546486,
+    "ci_high": 0.7355174677858323,
+    "n_iterations": 1
+  },
+  "analysis_b": [
+    {
+      "segment": 0,
+      "n": 1369,
+      "churn_rate": 0.4967129291453616,
+      "top_attributes": [
+        "MonthlyCharges",
+        "InternetService"
+      ],
+      "attribute_auc": 0.7419234323370733,
+      "p_value": 0.0,
+      "ci_low": 0.7500692906162487,
+      "ci_high": 0.7919542290179449
+    },
+    {
+      "segment": 1,
+      "n": 749,
+      "churn_rate": 0.2977303070761015,
+      "top_attributes": [
+        "MonthlyCharges"
+      ],
+      "attribute_auc": 0.731518137348326,
+      "p_value": 0.0,
+      "ci_low": 0.7431245264168999,
+      "ci_high": 0.8164079475621007
+    },
+    {
+      "segment": 2,
+      "n": 1534,
+      "churn_rate": 0.19230769230769232,
+      "top_attributes": [
+        "Contract",
+        "MonthlyCharges"
+      ],
+      "attribute_auc": 0.7902974291830008,
+      "p_value": 0.0,
+      "ci_low": 0.8019561383300905,
+      "ci_high": 0.8476956069450974
+    },
+    {
+      "segment": 3,
+      "n": 1278,
+      "churn_rate": 0.08607198748043818,
+      "top_attributes": [
+        "Contract",
+        "MonthlyCharges"
+      ],
+      "attribute_auc": 0.7677051965678576,
+      "p_value": 0.0,
+      "ci_low": 0.8033871926643432,
+      "ci_high": 0.8680138880107551
+    }
+  ],
+  "subtrack_q": {
+    "risk_attribute_values": {
+      "Contract": "Month-to-month",
+      "PaymentMethod": "Electronic check",
+      "InternetService": "Fiber optic",
+      "OnlineSecurity": "No",
+      "TechSupport": "No"
+    },
+    "risk_count_only_auc": 0.7930403082023966,
+    "p_value": 0.0,
+    "top_risk_count_value": 5,
+    "ci_low": 0.6192002881844381,
+    "ci_high": 0.6935158501440921
+  }
+}

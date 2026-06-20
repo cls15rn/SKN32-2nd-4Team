@@ -1,0 +1,9 @@
+pandas
+numpy
+scikit-learn
+xgboost
+ruptures        # PELT 변화점 탐지 (분석A 1단계 비교용 보조)
+lifelines       # Kaplan-Meier (1단계 비교)
+shap            # 모델 해석
+joblib          # 모델 저장/로드
+streamlit       # webapp (추후 구현)
