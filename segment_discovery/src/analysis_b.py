@@ -122,17 +122,43 @@ def bootstrap_attribute_auc_ci(
     """
     ⚠️ 분석B는 세그먼트 안에서 또 5-fold를 나누므로 분석A보다 표본부족 위험이 큼.
     (기획_메모.md 4.1-A 보강 참조)
+
+    [버그 수정, OOB 방식] 부트스트랩(복원추출)으로 뽑은 표본 "안에서" 다시
+    5-fold를 나누면, 같은 원본 행의 중복 복사본이 Train fold와 Test fold에
+    동시에 들어가 데이터 누수가 생긴다 (실데이터 확인: 점추정 AUC=0.7419인데
+    부트스트랩 평균이 0.7699로 체계적으로 더 높게 나옴 - 신뢰구간 하한이
+    점추정값보다 높아지는 비정상적 결과로 발견됨).
+
+    해결: Out-of-Bag(OOB) 방식 - 복원추출로 뽑힌 행으로만 학습하고, 한 번도
+    뽑히지 않은 행(보통 전체의 약 37%)으로만 평가한다. Train/Test가 절대
+    겹치지 않는다는 게 구조적으로 보장됨. 부트스트랩(복원추출) 자체는
+    그대로 유지 - "표본 변동성을 재현한다"는 핵심 원리는 안 바뀜.
     """
     rng = np.random.RandomState(random_state)
     n = len(df_segment)
+    df_enc = _encode_categoricals(df_segment)
+    X_all = df_enc[list(attributes)].values
+    y_all = df_enc["ChurnFlag"].values
+
     boot_aucs = []
     for _ in range(n_bootstrap):
-        idx = rng.choice(n, n, replace=True)
-        sample = df_segment.iloc[idx]
-        if sample["ChurnFlag"].nunique() < 2:
+        boot_idx = rng.choice(n, n, replace=True)
+        oob_mask = np.ones(n, dtype=bool)
+        oob_mask[np.unique(boot_idx)] = False
+        oob_idx = np.where(oob_mask)[0]
+
+        if len(oob_idx) < 10 or len(np.unique(y_all[oob_idx])) < 2:
+            continue  # OOB 표본이 너무 적거나 한 클래스만 있으면 AUC 계산 불가
+        if len(np.unique(y_all[boot_idx])) < 2:
             continue
-        auc = attribute_based_auc(sample, attributes, random_state=random_state)
-        boot_aucs.append(auc)
+
+        model = RandomForestClassifier(
+            n_estimators=100, max_depth=4, random_state=random_state
+        )
+        model.fit(X_all[boot_idx], y_all[boot_idx])
+        proba = model.predict_proba(X_all[oob_idx])[:, 1]
+        boot_aucs.append(roc_auc_score(y_all[oob_idx], proba))
+
     boot_aucs = np.array(boot_aucs)
     ci_low, ci_high = np.percentile(boot_aucs, [2.5, 97.5])
     return float(boot_aucs.mean()), float(ci_low), float(ci_high)

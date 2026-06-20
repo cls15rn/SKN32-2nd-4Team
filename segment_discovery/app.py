@@ -7,8 +7,11 @@ segment_rules.json 으로 저장한다.
 이 결과 파일은 churn_prediction 패키지가 가져다 쓰는 유일한 인터페이스다.
 (churn_prediction 은 이 패키지의 내부 코드를 알 필요가 없다)
 
-실행 주기: 1년 단위 (또는 데이터가 충분히 쌓였을 때) - 월 단위로 도는
-churn_prediction 과는 별개의 주기. (기획_메모.md 운영 설계 참조)
+실행 주기: 표본이 충분히 쌓였을 때(또는 패턴 변화가 의심될 때) - churn_prediction의
+train.py(재학습)와 같은 묶음으로 함께 실행되는 게 일관적이다. train.py가 쓰는
+segment_rules.json 자체가 이 스크립트의 산출물이므로, 분석A/B/Q가 갱신될 때
+모델도 같은 누적 데이터로 재학습해야 한다. (predict.py는 이 묶음과 무관하게
+독립적으로 자유로운 주기 - 기획_메모.md 운영 설계 참조)
 
 사용법:
     cd segment_discovery

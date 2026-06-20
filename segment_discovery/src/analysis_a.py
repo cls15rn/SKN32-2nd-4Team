@@ -186,19 +186,39 @@ def bootstrap_auc_confidence_interval(
     세그먼트단독 AUC를 부트스트랩으로 재추정해 95% 신뢰구간 계산.
     사전 외부 공식(검정력분석 등) 없이, 측정 자체의 안정성을 사후에 직접 확인.
 
+    [OOB 방식] 분석B(analysis_b.bootstrap_attribute_auc_ci)와 동일한 이유로
+    Out-of-Bag 방식 사용 - 복원추출로 뽑힌 행으로 학습, 안 뽑힌 행으로만 평가해
+    Train/Test가 겹치지 않게 함. 실데이터 확인 결과 분석A는 입력이 세그먼트
+    라벨(범주 몇 개)뿐이라 이전 방식의 편향이 작았지만(점추정 0.7208 vs
+    이전방식 부트스트랩 평균 0.7205로 거의 일치), 분석B와 같은 원리로
+    일관되게 통일.
+
     Returns
     -------
     mean_auc, ci_low, ci_high
     """
     rng = np.random.RandomState(random_state)
     n = len(df)
+    X_all = df[segment_col].values.reshape(-1, 1)
+    y_all = df[churn_col].values
+
     boot_aucs = []
     for _ in range(n_bootstrap):
-        sample = df.sample(n=n, replace=True, random_state=rng.randint(0, 10**6))
-        if sample[churn_col].nunique() < 2:
+        boot_idx = rng.choice(n, n, replace=True)
+        oob_mask = np.ones(n, dtype=bool)
+        oob_mask[np.unique(boot_idx)] = False
+        oob_idx = np.where(oob_mask)[0]
+
+        if len(oob_idx) < 10 or len(np.unique(y_all[oob_idx])) < 2:
             continue
-        auc = segment_only_auc(sample[segment_col], sample[churn_col], random_state=random_state)
-        boot_aucs.append(auc)
+        if len(np.unique(y_all[boot_idx])) < 2:
+            continue
+
+        model = RandomForestClassifier(n_estimators=100, random_state=random_state)
+        model.fit(X_all[boot_idx], y_all[boot_idx])
+        proba = model.predict_proba(X_all[oob_idx])[:, 1]
+        boot_aucs.append(roc_auc_score(y_all[oob_idx], proba))
+
     boot_aucs = np.array(boot_aucs)
     ci_low, ci_high = np.percentile(boot_aucs, [2.5, 97.5])
     return float(boot_aucs.mean()), float(ci_low), float(ci_high)
