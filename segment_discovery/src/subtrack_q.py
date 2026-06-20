@@ -14,6 +14,8 @@
 보조 탐색: K-means 클러스터링 (risk_count 가 다루지 못하는 미발견 위험조합 탐색용)
 """
 from typing import Sequence
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,6 +24,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import config  # noqa: E402
 
 from analysis_b import CATEGORICAL_COLS  # noqa: E402
 
@@ -151,7 +156,9 @@ def run_kmeans_exploration(
 
 def run_subtrack_q(
     df: pd.DataFrame, risk_attribute_values: dict[str, str],
-    n_permutations: int = 500, n_bootstrap: int = 300, kmeans_clusters: int = 6,
+    n_permutations: int = config.SUBTRACK_Q_PERMUTATION_COUNT,
+    n_bootstrap: int = config.SUBTRACK_Q_BOOTSTRAP_COUNT,
+    kmeans_clusters: int = config.SUBTRACK_Q_KMEANS_CLUSTERS,
 ) -> dict:
     """
     Returns

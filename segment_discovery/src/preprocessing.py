@@ -17,6 +17,8 @@ from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import config  # noqa: E402
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
 from data_loader import clean_raw_data  # noqa: E402
 
@@ -34,10 +36,19 @@ def add_churn_flag(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def split_train_test(df: pd.DataFrame, test_size: float = 0.3, random_state: int = 42):
+def split_train_test(
+    df: pd.DataFrame,
+    test_size: float = config.TEST_SIZE,
+    random_state: int = config.RANDOM_STATE,
+):
     """
     계층화 분할 (stratify=Churn).
     세그먼트 경계/위험속성 '탐색'은 df_train 만 사용 - 누수 방지.
+
+    ⚠️ train.py(churn_prediction)도 이 함수를 그대로 호출하므로, test_size와
+    random_state를 config.py 한 곳에서만 관리한다 - 두 곳이 다른 분할
+    기준을 쓰면 segment_discovery가 본 Train과 모델이 학습한 Train이
+    미세하게 달라질 위험이 있다.
     """
     df_train, df_test = train_test_split(
         df, test_size=test_size, stratify=df["Churn"], random_state=random_state
@@ -45,8 +56,12 @@ def split_train_test(df: pd.DataFrame, test_size: float = 0.3, random_state: int
     return df_train.reset_index(drop=True), df_test.reset_index(drop=True)
 
 
-def run_preprocessing(csv_path: str, test_size: float = 0.3, random_state: int = 42):
-    """전체 전처리 파이프라인 (탐색용)"""
+def run_preprocessing(
+    csv_path: str,
+    test_size: float = config.TEST_SIZE,
+    random_state: int = config.RANDOM_STATE,
+):
+    """전체 전처리 파이프라인 (탐색용 + churn_prediction 재사용)"""
     df = load_raw(csv_path)
     df = clean_raw_data(df)  # 자료형 정리 + No-service 통합 (shared, 공통 관문)
     df = add_churn_flag(df)

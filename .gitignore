@@ -21,3 +21,9 @@ churn_prediction/outputs/*
 # run_history.csv(누가 언제 재학습했는지 기록)도 팀에서 공유하고 싶다면
 # 아래 주석을 해제해서 예외로 둘 것:
 # !churn_prediction/outputs/run_history.csv
+
+# 실행 로그 (train.py 성공/실패 기록, 로컬에서만 보면 충분)
+logs/
+
+# pytest 캐시
+.pytest_cache/

@@ -45,6 +45,9 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from feature_engineering import FeatureTransformer  # noqa: E402
@@ -54,10 +57,8 @@ DEFAULT_MODEL_PATH = LATEST_DIR / "model.pkl"
 DEFAULT_TRANSFORMER_PATH = LATEST_DIR / "feature_transformer.pkl"
 DEFAULT_OUTPUT_PATH = Path(__file__).parent / "outputs" / "latest_predictions.csv"
 
-DEFAULT_NEW_DATA_PATH = Path(__file__).parent.parent / "data" / "new_customers.csv"
-DEMO_FALLBACK_DATA_PATH = (
-    Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
-)
+DEFAULT_NEW_DATA_PATH = config.DEFAULT_NEW_DATA_PATH
+DEMO_FALLBACK_DATA_PATH = config.DEFAULT_DATA_PATH
 
 
 def predict(

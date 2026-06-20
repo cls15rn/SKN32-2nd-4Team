@@ -4,6 +4,12 @@
 
 ```
 SKN32-2nd-4Team/
+├── config.py             # 전체 프로젝트 설정 단일 출처 (랜덤시드, 반복횟수, 하이퍼파라미터, 경로)
+├── .github/workflows/
+│   └── tests.yml          # push/PR마다 자동으로 tests/ 실행 (CI)
+├── tests/                 # pytest — 핵심 회귀 테스트 (OOB 버그, feature_cols_12/_3 분리, 공통 전처리)
+├── logs/                  # train.py 실행 기록 (성공/실패 모두, .gitignore 대상)
+│
 ├── segment_discovery/   # 분석A·분석B·서브트랙Q (재학습 묶음 — train.py와 같은 주기로 가끔 실행)
 │   ├── src/
 │   │   ├── preprocessing.py   # 탐색용 전처리 (원본 로드~Train/Test 분할)
@@ -30,9 +36,12 @@ SKN32-2nd-4Team/
 │   ├── app.py
 │   └── pages/
 │
-├── shared/                # 두 패키지 공통 모듈 (data_loader.py: 경로 상수 + 최소 자료형 정리)
+├── shared/                # 두 패키지 공통 모듈
+│   ├── columns.py          # CATEGORICAL_COLS 등 컬럼 분류의 단일 출처
+│   ├── data_loader.py      # clean_raw_data: 자료형 정리+No-service 통합 공통 관문
+│   └── logging_setup.py    # train.py 등의 실패 추적용 파일 로깅
 ├── data/                  # 원본 데이터 (WA_FnUseC_TelcoCustomerChurn.csv), 신규고객은 new_customers.csv
-└── requirements.txt
+└── requirements.txt        # 검증된 최소 버전 명시
 ```
 
 ## 핵심 설계 원칙
@@ -75,4 +84,11 @@ python predict.py --data ../data/new_customers.csv
 # 4. (추후) 대시보드
 streamlit run ../webapp/app.py
 ```
+
+## 테스트 / 설정 / 자동화
+
+- **설정값은 `config.py` 한 곳에서 관리**: 랜덤시드, Train/Test 분할 비율, 순열검정·부트스트랩 반복횟수, XGBoost 하이퍼파라미터 등을 바꾸려면 이 파일만 고치면 된다. 특히 2단계/3단계 XGBoost는 반드시 같은 설정을 써야 하므로(`train_models._xgboost_kwargs()`), 숫자를 두 곳에 따로 적지 않도록 통일되어 있다.
+- **테스트 실행**: `pip install -r requirements.txt` 후 `pytest tests/ -v`. 실제로 발견됐던 버그(부트스트랩 데이터 누수, No-service 통합 누락, feature_cols_12에 segment 컬럼이 섞이는 것)를 회귀 테스트로 고정해뒀다 — 코드를 고친 뒤에는 이 명령으로 먼저 확인할 것.
+- **CI**: `.github/workflows/tests.yml`이 push/PR마다 GitHub Actions에서 자동으로 `pytest`를 돌린다. 코드 버전이 안 맞는 상태(예: 옛 파일이 삭제 안 된 채 새 모듈과 같이 push되는 경우)를 push 시점에 미리 잡아준다.
+- **실패 추적**: `train.py` 실행 결과(성공/실패)는 `logs/train.log`에 타임스탬프와 함께 누적된다. 콘솔에서 에러를 놓쳤어도 이 파일에서 다시 확인할 수 있다.
 

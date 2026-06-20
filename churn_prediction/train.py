@@ -38,6 +38,11 @@ from pathlib import Path
 
 import joblib
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent / "shared"))
+from logging_setup import get_logger  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "segment_discovery" / "src"))
 
@@ -51,15 +56,15 @@ from feature_engineering import load_segment_rules, prepare_model_inputs  # noqa
 from preprocessing import run_preprocessing  # noqa: E402
 from train_models import train_all_stages  # noqa: E402
 
+logger = get_logger("train")
+
 OUTPUT_DIR = Path(__file__).parent / "outputs"
 VERSIONS_DIR = OUTPUT_DIR / "versions"
 LATEST_DIR = OUTPUT_DIR / "latest"
 RUN_HISTORY_PATH = OUTPUT_DIR / "run_history.csv"
 
-DEFAULT_DATA_PATH = Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
-DEFAULT_RULES_PATH = (
-    Path(__file__).parent.parent / "segment_discovery" / "outputs" / "segment_rules.json"
-)
+DEFAULT_DATA_PATH = config.DEFAULT_DATA_PATH
+DEFAULT_RULES_PATH = config.SEGMENT_RULES_PATH
 
 
 def append_run_history(row: dict) -> None:
@@ -180,4 +185,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     print(f"[안내] 데이터: {args.data}\n       규칙: {args.rules}\n")
-    main(args.data, args.rules)
+    logger.info(f"재학습 시작 - data={args.data}, rules={args.rules}")
+    try:
+        main(args.data, args.rules)
+        logger.info("재학습 성공")
+    except Exception:
+        logger.exception("재학습 실패")  # 콘솔에는 보통의 traceback이, 파일에는 같은 내용이 남음
+        raise

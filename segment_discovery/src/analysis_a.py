@@ -8,7 +8,9 @@
 ①②③ 은 완전히 별개 절차 - 혼동하지 말 것 (기획_메모.md 3.3 참조)
 """
 from collections import Counter
+from pathlib import Path
 from typing import Sequence
+import sys
 
 import numpy as np
 import pandas as pd
@@ -16,6 +18,9 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GridSearchCV, KFold, StratifiedKFold
 from sklearn.tree import DecisionTreeRegressor
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import config  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +150,8 @@ def segment_only_auc(
 
 def permutation_test_for_segment(
     segment: pd.Series, churn_flag: pd.Series,
-    n_permutations: int = 200, random_state: int = 42,
+    n_permutations: int = config.ANALYSIS_A_PERMUTATION_COUNT,
+    random_state: int = config.RANDOM_STATE,
 ) -> tuple[float, np.ndarray]:
     """
     이탈여부 라벨을 무작위로 섞어 segment_only_auc 를 재계산 반복.
@@ -180,7 +186,8 @@ def permutation_test_for_segment(
 
 def bootstrap_auc_confidence_interval(
     df: pd.DataFrame, segment_col: str = "segment", churn_col: str = "ChurnFlag",
-    n_bootstrap: int = 300, random_state: int = 42,
+    n_bootstrap: int = config.ANALYSIS_A_BOOTSTRAP_COUNT,
+    random_state: int = config.RANDOM_STATE,
 ) -> tuple[float, float, float]:
     """
     세그먼트단독 AUC를 부트스트랩으로 재추정해 95% 신뢰구간 계산.
@@ -230,9 +237,9 @@ def bootstrap_auc_confidence_interval(
 
 def run_analysis_a(
     df_train: pd.DataFrame,
-    p_value_threshold: float = 0.05,
-    ci_width_threshold: float = 0.1,
-    max_iterations: int = 5,
+    p_value_threshold: float = config.ANALYSIS_A_P_VALUE_THRESHOLD,
+    ci_width_threshold: float = config.ANALYSIS_A_CI_WIDTH_THRESHOLD,
+    max_iterations: int = config.ANALYSIS_A_MAX_ITERATIONS,
 ) -> dict:
     """
     ①→②→③ 사이클. ②③ 미통과 시 인접 구간 통합 후 ①부터 재실행.

@@ -22,6 +22,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from analysis_a import run_analysis_a, make_segment_column  # noqa: E402
@@ -97,7 +100,7 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
     return rules
 
 
-DEFAULT_DATA_PATH = Path(__file__).parent.parent / "data" / "WA_FnUseC_TelcoCustomerChurn.csv"
+DEFAULT_DATA_PATH = config.DEFAULT_DATA_PATH
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="분석A/B/서브트랙Q 실행")

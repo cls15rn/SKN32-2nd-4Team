@@ -13,6 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import config  # noqa: E402
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
@@ -173,7 +176,7 @@ def bootstrap_attribute_auc_ci(
 # ---------------------------------------------------------------------------
 
 def run_analysis_b(
-    df_train_with_segment: pd.DataFrame, top_n: int = 2,
+    df_train_with_segment: pd.DataFrame, top_n: int = config.ANALYSIS_B_TOP_N_ATTRIBUTES,
 ) -> pd.DataFrame:
     """
     각 세그먼트에 대해 Ⓐ→Ⓑ→Ⓒ 를 수행해 결과를 표로 정리.
