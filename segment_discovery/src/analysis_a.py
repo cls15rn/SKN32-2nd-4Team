@@ -29,8 +29,8 @@ import config  # noqa: E402
 
 def find_boundaries_pruned_tree(
     df_train: pd.DataFrame,
-    cv_folds: int = 5,
-    random_state: int = 42,
+    cv_folds: int = config.ANALYSIS_A_CV_FOLDS,
+    random_state: int = config.RANDOM_STATE,
     max_boundaries: int | None = None,
 ) -> tuple[list[float], float]:
     """
@@ -186,7 +186,7 @@ def find_stable_rf_n_estimators(
 def random_forest_boundary_votes(
     df_train: pd.DataFrame,
     n_estimators: int | None = None,
-    random_state: int = 42,
+    random_state: int = config.RANDOM_STATE,
     top_n: int = 10,
 ) -> list[tuple[float, int]]:
     """
@@ -253,7 +253,7 @@ def make_segment_column(df: pd.DataFrame, boundaries: Sequence[float]) -> pd.Ser
 
 def segment_only_auc(
     segment: pd.Series, churn_flag: pd.Series,
-    cv_folds: int = 5, random_state: int = 42,
+    cv_folds: int = config.ANALYSIS_A_CV_FOLDS, random_state: int = config.RANDOM_STATE,
 ) -> float:
     """세그먼트 라벨만으로 분류했을 때의 교차검증 AUC"""
     X = segment.values.reshape(-1, 1)

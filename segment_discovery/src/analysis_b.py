@@ -45,7 +45,7 @@ def _encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def find_top_risk_attributes(
-    df_segment: pd.DataFrame, random_state: int = 42,
+    df_segment: pd.DataFrame, random_state: int = config.RANDOM_STATE,
 ) -> list[str]:
     """
     세그먼트 안에서 가지치기 결정나무로 "어떤 속성이 이탈 분기에 가장 크게
@@ -83,7 +83,7 @@ def find_top_risk_attributes(
 
 def attribute_based_auc(
     df_segment: pd.DataFrame, attributes: Sequence[str],
-    cv_folds: int = 5, random_state: int = 42,
+    cv_folds: int = config.ANALYSIS_A_CV_FOLDS, random_state: int = config.RANDOM_STATE,
 ) -> float:
     """그 속성들만으로 만든 모델의 교차검증 AUC"""
     df_enc = _encode_categoricals(df_segment)
@@ -104,7 +104,8 @@ def attribute_based_auc(
 
 def permutation_test_for_attributes(
     df_segment: pd.DataFrame, attributes: Sequence[str],
-    n_permutations: int = 200, random_state: int = 42,
+    n_permutations: int = config.ANALYSIS_B_PERMUTATION_COUNT,
+    random_state: int = config.RANDOM_STATE,
 ) -> float:
     """분석A의 ②와 동일한 절차 - 라벨 순열검정으로 우연이 아님을 확인"""
     observed = attribute_based_auc(df_segment, attributes, random_state=random_state)
@@ -116,7 +117,9 @@ def permutation_test_for_attributes(
     permuted_aucs = []
     for _ in range(n_permutations):
         y_shuffled = rng.permutation(y_values)
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+        cv = StratifiedKFold(
+            n_splits=config.ANALYSIS_A_CV_FOLDS, shuffle=True, random_state=random_state
+        )
         aucs = []
         for train_idx, test_idx in cv.split(X, y_shuffled):
             model = RandomForestClassifier(n_estimators=50, max_depth=4, random_state=random_state)
@@ -134,7 +137,8 @@ def permutation_test_for_attributes(
 
 def bootstrap_attribute_auc_ci(
     df_segment: pd.DataFrame, attributes: Sequence[str],
-    n_bootstrap: int = 100, random_state: int = 42,
+    n_bootstrap: int = config.ANALYSIS_B_BOOTSTRAP_COUNT,
+    random_state: int = config.RANDOM_STATE,
 ) -> tuple[float, float, float]:
     """
     ⚠️ 분석B는 세그먼트 안에서 또 5-fold를 나누므로 분석A보다 표본부족 위험이 큼.

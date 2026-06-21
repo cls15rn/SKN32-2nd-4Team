@@ -20,7 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import config  # noqa: E402
 
 
-def compute_all_metrics(y_true: pd.Series, y_proba: np.ndarray, threshold: float = 0.5) -> dict:
+def compute_all_metrics(
+    y_true: pd.Series, y_proba: np.ndarray,
+    threshold: float = config.DEFAULT_CLASSIFICATION_THRESHOLD,
+) -> dict:
     """
     보고서용: Accuracy/Precision/Recall/F1/F2/ROC-AUC/PR-AUC 전부 계산.
     Accuracy는 불균형 데이터에서 참고용으로만 사용할 것.
@@ -77,8 +80,8 @@ def find_recall_drop_threshold(
     valid_mask = recalls[:-1] >= min_recall  # thresholds와 길이를 맞추기 위해 마지막 원소 제외
     valid_indices = np.where(valid_mask)[0]
     if len(valid_indices) < window + 1:
-        # 유효 구간이 너무 좁으면 기준을 완화하지 않고 안전하게 0.5 반환
-        return 0.5
+        # 유효 구간이 너무 좁으면 기준을 완화하지 않고 안전한 기본값 반환
+        return config.DEFAULT_CLASSIFICATION_THRESHOLD
 
     recalls_in_range = recalls[valid_indices[0]: valid_indices[-1] + 2]
     thresholds_in_range = thresholds[valid_indices[0]: valid_indices[-1] + 1]
@@ -86,11 +89,11 @@ def find_recall_drop_threshold(
     # 윈도우 평균 기반 변화율: i번째 지점에서 "앞으로 window개 동안의 평균 하락 속도"
     window = min(window, len(recalls_in_range) - 1)
     if window < 1:
-        return 0.5
+        return config.DEFAULT_CLASSIFICATION_THRESHOLD
     windowed_diffs = (recalls_in_range[window:] - recalls_in_range[:-window]) / window
 
     if len(windowed_diffs) == 0:
-        return 0.5
+        return config.DEFAULT_CLASSIFICATION_THRESHOLD
     sharpest_drop_idx = int(np.argmin(windowed_diffs))
     sharpest_drop_idx = min(sharpest_drop_idx, len(thresholds_in_range) - 1)
     return float(thresholds_in_range[sharpest_drop_idx])

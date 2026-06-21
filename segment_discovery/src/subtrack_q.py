@@ -65,7 +65,7 @@ def compute_risk_count(df: pd.DataFrame, risk_attribute_values: dict[str, str]) 
 
 def risk_count_only_auc(
     risk_count: pd.Series, churn_flag: pd.Series,
-    cv_folds: int = 5, random_state: int = 42,
+    cv_folds: int = config.ANALYSIS_A_CV_FOLDS, random_state: int = config.RANDOM_STATE,
 ) -> float:
     X = risk_count.values.reshape(-1, 1)
     y = churn_flag.values
@@ -81,7 +81,8 @@ def risk_count_only_auc(
 
 def permutation_test_for_risk_count(
     risk_count: pd.Series, churn_flag: pd.Series,
-    n_permutations: int = 500, random_state: int = 42,
+    n_permutations: int = config.SUBTRACK_Q_PERMUTATION_COUNT,
+    random_state: int = config.RANDOM_STATE,
 ) -> float:
     """순열검정으로 risk_count~이탈여부 관계가 우연이 아님을 확인"""
     observed_var = churn_flag.groupby(risk_count).mean().var()
@@ -98,7 +99,8 @@ def permutation_test_for_risk_count(
 
 def bootstrap_top_risk_group_ci(
     df: pd.DataFrame, risk_count_col: str = "risk_count", churn_col: str = "ChurnFlag",
-    n_bootstrap: int = 300, random_state: int = 42,
+    n_bootstrap: int = config.SUBTRACK_Q_BOOTSTRAP_COUNT,
+    random_state: int = config.RANDOM_STATE,
 ) -> tuple[int, float, float]:
     """최고위험구간(risk_count 최댓값)의 부트스트랩 신뢰구간으로 안정성 점검"""
     top_value = int(df[risk_count_col].max())
@@ -118,7 +120,8 @@ def bootstrap_top_risk_group_ci(
 # ---------------------------------------------------------------------------
 
 def run_kmeans_exploration(
-    df: pd.DataFrame, n_clusters: int = 6, random_state: int = 42,
+    df: pd.DataFrame, n_clusters: int = config.SUBTRACK_Q_KMEANS_CLUSTERS,
+    random_state: int = config.RANDOM_STATE,
 ) -> pd.DataFrame:
     """
     전체데이터 1회, tenure+전체속성으로 클러스터링.

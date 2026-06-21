@@ -91,7 +91,9 @@ def search_xgboost_hyperparameters(
         eval_metric="logloss",
         random_state=config.RANDOM_STATE,
     )
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=config.RANDOM_STATE)
+    cv = StratifiedKFold(
+        n_splits=config.XGBOOST_SEARCH_CV_FOLDS, shuffle=True, random_state=config.RANDOM_STATE
+    )
     grid = GridSearchCV(base_model, param_grid, cv=cv, scoring="roc_auc", n_jobs=1)
     grid.fit(X_train_tree_12, y_train)
 

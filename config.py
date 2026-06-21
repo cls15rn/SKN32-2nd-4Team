@@ -69,6 +69,10 @@ SUBTRACK_Q_KMEANS_CLUSTERS = 6
 XGBOOST_MAX_DEPTH_CANDIDATES = [3, 4, 5, 6]
 XGBOOST_N_ESTIMATORS_CANDIDATES = [100, 200, 300]
 XGBOOST_LEARNING_RATE = 0.1  # 이건 탐색 대상에 포함하지 않음 - 관행값으로 고정, 필요시 후속 확장
+# ⚠️ ANALYSIS_A_CV_FOLDS와 값이 같아도(둘 다 5) 의미가 다른 별개 설정이다 -
+# 같은 이름으로 묶으면 "NUMERIC_COLS가 파일마다 다른 의미였던" 혼동이
+# 재발할 수 있어 의도적으로 분리.
+XGBOOST_SEARCH_CV_FOLDS = 5
 MLP_HIDDEN_LAYER_SIZES = (32, 16)
 MLP_MAX_ITER = 500
 
@@ -83,6 +87,10 @@ THRESHOLD_SEARCH_MIN_RECALL = 0.5
 # 한 점(바로 다음 포인트)이 아니라 이 개수만큼의 윈도우 평균 하락률로 비교해
 # 단발성 노이즈에 안정적으로 만든다 (RF 트리개수 자동탐지의 patience와 같은 원리).
 THRESHOLD_SEARCH_WINDOW = 20
+# find_recall_drop_threshold가 탐색에 실패했을 때(유효구간 부족 등)의 안전한
+# 폴백값. compute_all_metrics의 기본값도 이 상수 하나로 통일 - 같은 "0.5"라는
+# 숫자가 여러 파일에 따로 적혀 있으면 한쪽만 바꾸고 다른 쪽을 놓치는 위험이 있다.
+DEFAULT_CLASSIFICATION_THRESHOLD = 0.5
 
 # ---------------------------------------------------------------------------
 # 개발/검증 시 빠르게 돌려보고 싶을 때 (기본값 대신 이 묶음을 넘기면 됨)
