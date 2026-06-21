@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import config  # noqa: E402
@@ -104,18 +105,31 @@ def attribute_based_auc(
 
 def permutation_test_for_attributes(
     df_segment: pd.DataFrame, attributes: Sequence[str],
-    n_permutations: int = config.ANALYSIS_B_PERMUTATION_COUNT,
+    p_threshold: float = config.ANALYSIS_A_P_VALUE_THRESHOLD,
+    confidence: float = config.SEQUENTIAL_PERMUTATION_CONFIDENCE,
+    check_every: int = config.SEQUENTIAL_PERMUTATION_CHECK_EVERY,
+    max_iter: int = config.SEQUENTIAL_PERMUTATION_MAX_ITER,
     random_state: int = config.RANDOM_STATE,
-) -> float:
-    """분석A의 ②와 동일한 절차 - 라벨 순열검정으로 우연이 아님을 확인"""
+) -> tuple[float, int]:
+    """
+    분석A의 ②와 동일한 절차(라벨 순열검정) + 동일한 순차적 조기중단(Clopper-
+    Pearson 신뢰상한 기반). analysis_a.permutation_test_for_segment와 같은
+    원리를 그대로 재사용 - 실데이터 검증 결과 작은 세그먼트에서도 일관되게
+    60회 부근에서 멈춤(200회 대비 약 3.3배 절감, 기획_메모.md 4.1-C 보강).
+
+    Returns
+    -------
+    p_value : 멈춘 시점까지 누적된 (초과횟수/반복횟수) - 추정 p값
+    n_permutations_used : 데이터가 직접 찾은 순열 반복횟수
+    """
     observed = attribute_based_auc(df_segment, attributes, random_state=random_state)
     rng = np.random.RandomState(random_state)
     df_enc = _encode_categoricals(df_segment)
     X = df_enc[list(attributes)].values
     y_values = df_enc["ChurnFlag"].values
+    exceed_count = 0
 
-    permuted_aucs = []
-    for _ in range(n_permutations):
+    for i in range(1, max_iter + 1):
         y_shuffled = rng.permutation(y_values)
         cv = StratifiedKFold(
             n_splits=config.ANALYSIS_A_CV_FOLDS, shuffle=True, random_state=random_state
@@ -126,9 +140,20 @@ def permutation_test_for_attributes(
             model.fit(X[train_idx], y_shuffled[train_idx])
             proba = model.predict_proba(X[test_idx])[:, 1]
             aucs.append(roc_auc_score(y_shuffled[test_idx], proba))
-        permuted_aucs.append(np.mean(aucs))
-    permuted_aucs = np.array(permuted_aucs)
-    return float((permuted_aucs >= observed).mean())
+        permuted_auc = np.mean(aucs)
+        if permuted_auc >= observed:
+            exceed_count += 1
+
+        if i % check_every == 0:
+            upper = stats.beta.ppf(confidence, exceed_count + 1, i - exceed_count)
+            lower = (
+                stats.beta.ppf(1 - confidence, exceed_count, i - exceed_count + 1)
+                if exceed_count > 0 else 0.0
+            )
+            if upper < p_threshold or lower > p_threshold:
+                return exceed_count / i, i
+
+    return exceed_count / max_iter, max_iter
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +210,97 @@ def bootstrap_attribute_auc_ci(
     return float(boot_aucs.mean()), float(ci_low), float(ci_high)
 
 
+def find_stable_bootstrap_count_for_attributes(
+    df_segment: pd.DataFrame, attributes: Sequence[str],
+    random_state: int = config.RANDOM_STATE,
+    max_iter: int = config.SEQUENTIAL_MAX_ITER,
+    check_every: int = config.SEQUENTIAL_CHECK_EVERY,
+    min_n_before_check: int = config.SEQUENTIAL_MIN_N_BEFORE_CHECK,
+    structural_gap: float = config.SEQUENTIAL_STRUCTURAL_GAP,
+    ceiling_patience: int = config.SEQUENTIAL_CEILING_PATIENCE,
+    self_stability_window: int = config.SEQUENTIAL_SELF_STABILITY_WINDOW,
+    self_stability_threshold: float = config.SEQUENTIAL_SELF_STABILITY_THRESHOLD,
+) -> tuple[int, float, float, float, pd.DataFrame]:
+    """
+    분석A의 find_stable_bootstrap_count(G안, 순차적 조기중단)와 완전히 같은
+    원리를 Ⓒ(분석B의 표본충분성 확인)에 적용. analysis_a.hanley_mcneil_se를
+    그대로 재사용 - 같은 공식을 두 곳에 따로 구현하면 한쪽만 고치고 다른
+    쪽을 놓치는 위험이 재발할 수 있다.
+
+    ⚠️ 분석B는 세그먼트 안에서 또 5-fold(Ⓑ)를 나누어 분석A보다 표본부족
+    위험이 크다고 누차 강조했는데, 정작 실측에서 작고 불균형한 세그먼트일수록
+    순차적 조기중단이 "더 많은 반복이 필요하다"고 자동으로 판단해 더 오래
+    실행되는 것으로 확인됨 - 표본부족 위험이 큰 곳에 자동으로 더 신중한
+    검증이 적용되는 바람직한 결과.
+
+    Returns
+    -------
+    stop_n, mean_auc, ci_low, ci_high, diagnostics : find_stable_bootstrap_count와 동일한 의미
+    """
+    from analysis_a import hanley_mcneil_se  # noqa: E402  (지연 import - 순환참조 방지)
+
+    df_enc = _encode_categoricals(df_segment)
+    X = df_enc[list(attributes)].values
+    y = df_enc["ChurnFlag"].values
+    n = len(df_segment)
+
+    point_auc = attribute_based_auc(df_segment, attributes, random_state=random_state)
+    n_positive = int(y.sum())
+    n_negative = n - n_positive
+    se_hm = hanley_mcneil_se(point_auc, n_positive, n_negative)
+    safe_ceiling = 2 * 1.96 * se_hm * structural_gap
+
+    rng = np.random.RandomState(random_state)
+    boot_aucs: list[float] = []
+    width_history: list[float] = []
+    rows = []
+    ceiling_streak = 0
+    last_ci_low, last_ci_high = float("nan"), float("nan")
+
+    for i in range(1, max_iter + 1):
+        boot_idx = rng.choice(n, n, replace=True)
+        oob_mask = np.ones(n, dtype=bool)
+        oob_mask[np.unique(boot_idx)] = False
+        oob_idx = np.where(oob_mask)[0]
+
+        if len(oob_idx) < 10 or len(np.unique(y[oob_idx])) < 2 or len(np.unique(y[boot_idx])) < 2:
+            continue
+
+        model = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=random_state)
+        model.fit(X[boot_idx], y[boot_idx])
+        proba = model.predict_proba(X[oob_idx])[:, 1]
+        boot_aucs.append(roc_auc_score(y[oob_idx], proba))
+
+        if i % check_every == 0 and len(boot_aucs) >= min_n_before_check:
+            last_ci_low, last_ci_high = np.percentile(boot_aucs, [2.5, 97.5])
+            width = last_ci_high - last_ci_low
+            width_history.append(width)
+            rows.append({"n": i, "ci_width": width})
+
+            if width <= safe_ceiling:
+                ceiling_streak += 1
+            else:
+                ceiling_streak = 0
+
+            self_stable = False
+            if len(width_history) >= self_stability_window + 1:
+                recent = width_history[-(self_stability_window + 1):]
+                rel_changes = [
+                    abs(recent[j + 1] - recent[j]) / recent[j]
+                    for j in range(len(recent) - 1) if recent[j] > 0
+                ]
+                self_stable = bool(rel_changes) and all(
+                    rc < self_stability_threshold for rc in rel_changes
+                )
+
+            if ceiling_streak >= ceiling_patience or self_stable:
+                diagnostics = pd.DataFrame(rows)
+                return i, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+
+    diagnostics = pd.DataFrame(rows)
+    return max_iter, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+
+
 # ---------------------------------------------------------------------------
 # 세그먼트별 전체 사이클
 # ---------------------------------------------------------------------------
@@ -198,7 +314,7 @@ def run_analysis_b(
     Returns
     -------
     result_df : columns = [segment, n, churn_rate, top_attributes,
-                            attribute_auc, p_value, ci_low, ci_high]
+                            attribute_auc, p_value, ci_low, ci_high, n_bootstrap_used]
     """
     rows = []
     for segment_id in sorted(df_train_with_segment["segment"].unique()):
@@ -208,8 +324,13 @@ def run_analysis_b(
 
         top_attrs = find_top_risk_attributes(df_segment)
         auc = attribute_based_auc(df_segment, top_attrs)
-        p_value = permutation_test_for_attributes(df_segment, top_attrs)
-        mean_auc, ci_low, ci_high = bootstrap_attribute_auc_ci(df_segment, top_attrs)
+        # Ⓑ: 순열검정도 순차적 조기중단 - 분석A와 동일 원리
+        p_value, n_permutations_used = permutation_test_for_attributes(df_segment, top_attrs)
+        # Ⓒ: 순차적 조기중단(G안) - 분석A와 동일 원리, 표본부족 위험이 큰
+        # 작은 세그먼트일수록 자동으로 더 많은 반복을 신중하게 수행함
+        n_bootstrap_used, mean_auc, ci_low, ci_high, _ = (
+            find_stable_bootstrap_count_for_attributes(df_segment, top_attrs)
+        )
 
         rows.append({
             "segment": segment_id,
@@ -220,5 +341,7 @@ def run_analysis_b(
             "p_value": p_value,
             "ci_low": ci_low,
             "ci_high": ci_high,
+            "n_bootstrap_used": n_bootstrap_used,
+            "n_permutations_used": n_permutations_used,
         })
     return pd.DataFrame(rows)

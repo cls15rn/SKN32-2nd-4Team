@@ -44,6 +44,8 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
     result_a = run_analysis_a(df_train)
     print(f"      경계: {result_a['boundaries']} (반복 {result_a['n_iterations']}회)")
     print(f"      RF 보조검증 트리개수(데이터가 직접 찾음): {result_a['rf_n_estimators_used']}개")
+    print(f"      부트스트랩 반복횟수(순차적 조기중단으로 데이터가 직접 찾음): {result_a['n_bootstrap_used']}회")
+    print(f"      순열검정 반복횟수(순차적 조기중단으로 데이터가 직접 찾음): {result_a['n_permutations_used']}회")
     print(f"      세그먼트단독 AUC: {result_a['segment_only_auc']:.4f}, "
           f"p={result_a['p_value']:.4f}, "
           f"신뢰구간=[{result_a['ci_low']:.4f}, {result_a['ci_high']:.4f}]")
@@ -78,6 +80,8 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
             "boundaries": result_a["boundaries"],
             "alpha": result_a["alpha"],
             "rf_n_estimators_used": result_a["rf_n_estimators_used"],
+            "n_bootstrap_used": result_a["n_bootstrap_used"],
+            "n_permutations_used": result_a["n_permutations_used"],
             "segment_only_auc": result_a["segment_only_auc"],
             "p_value": result_a["p_value"],
             "ci_low": result_a["ci_low"],

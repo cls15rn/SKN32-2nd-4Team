@@ -35,11 +35,56 @@ ANALYSIS_A_CV_FOLDS = 5
 # 탐색이 살펴볼 범위일 뿐, 최종 값이 아니다.
 ANALYSIS_A_RF_N_ESTIMATORS_CANDIDATES = [50, 100, 150, 200, 250, 300, 400, 500]
 ANALYSIS_A_RF_STABILITY_IMPROVEMENT_THRESHOLD = 0.15  # 이 비율 이상 개선 안 되면 그 지점에서 멈춤
-ANALYSIS_A_PERMUTATION_COUNT = 200        # ②순열검정 반복횟수 (운영시 기본값, 정확도용)
-ANALYSIS_A_BOOTSTRAP_COUNT = 300          # ③부트스트랩(OOB) 반복횟수
+# ⚠️ 예전 ANALYSIS_A_PERMUTATION_COUNT(200)는 더 이상 쓰이지 않음 - ②의
+# 반복횟수도 순차적 조기중단으로 자동화됨 (SEQUENTIAL_PERMUTATION_* 참조)
+ANALYSIS_A_BOOTSTRAP_COUNT = 300          # ③부트스트랩(OOB) 반복횟수 - bootstrap_auc_confidence_interval(고정횟수 버전)의 기본값. run_analysis_a는 더 이상 이 함수를 쓰지 않음(아래 SEQUENTIAL 설정 참조)
 ANALYSIS_A_P_VALUE_THRESHOLD = 0.05       # ② 통과 기준
 ANALYSIS_A_CI_WIDTH_THRESHOLD = 0.1       # ③ 통과 기준 (신뢰구간 폭)
 ANALYSIS_A_MAX_ITERATIONS = 5             # ②③ 미통과시 인접구간 통합 재시도 최대횟수
+
+# ---------------------------------------------------------------------------
+# ③ 부트스트랩 반복횟수 — 순차적 조기 중단 (Sequential Early Stopping, "G안")
+# ---------------------------------------------------------------------------
+# ⚠️ 위 ANALYSIS_A_BOOTSTRAP_COUNT(300)는 검증되지 않은 관행값이었다.
+# run_analysis_a는 이제 find_stable_bootstrap_count를 써서, 표본크기·불균형도에
+# 맞는 반복횟수를 매번 직접 찾는다. (기획_메모.md 4.1-C 참조)
+#
+# 방법: 부트스트랩을 1회씩 누적(이전 계산을 버리지 않음)하면서, 매
+# SEQUENTIAL_CHECK_EVERY 회마다 CI폭을 확인한다. (1) Hanley-McNeil
+# 이론값×SEQUENTIAL_STRUCTURAL_GAP 보다 좁아지거나, (2) 최근
+# SEQUENTIAL_SELF_STABILITY_WINDOW 번의 측정이 서로
+# SEQUENTIAL_SELF_STABILITY_THRESHOLD 이내로 거의 안 변하면, 그 상태가
+# 연속 SEQUENTIAL_CEILING_PATIENCE회 유지될 때 멈춘다.
+#
+# 실데이터 검증(시드 5개): 전체데이터(4,930명)는 평균 40회(300회 대비
+# 7.5배 절감, 표준편차 0.0037로 안정), 작은 불균형 세그먼트(749명,
+# 이탈률9.8%)는 평균 242회(1.2배 절감, 표준편차 0.0050)로 더 신중하게
+# 멈췄다 - "표본 특성에 맞게 반복횟수가 동적으로 달라진다"는 목표가 실증됨.
+SEQUENTIAL_MAX_ITER = 500
+SEQUENTIAL_CHECK_EVERY = 10
+SEQUENTIAL_MIN_N_BEFORE_CHECK = 30   # 너무 적은 표본으로 CI폭을 재는 것 자체가 무의미해짐을 방지
+SEQUENTIAL_STRUCTURAL_GAP = 1.3      # OOB 방식의 구조적 변동성(모델 재학습)을 감안한 여유 - Hanley-McNeil은 "고정된 분류기"를 가정하므로
+SEQUENTIAL_CEILING_PATIENCE = 2      # 상한 도달이 단발성 우연이 아닌지 연속 확인
+SEQUENTIAL_SELF_STABILITY_WINDOW = 5
+SEQUENTIAL_SELF_STABILITY_THRESHOLD = 0.05  # 상한에 못 도달해도(작은 표본 등) 무한반복 방지하는 안전망
+
+# ---------------------------------------------------------------------------
+# ②·Ⓑ 순열검정 반복횟수 — 순차적 조기 중단 (부트스트랩과는 다른 통계량)
+# ---------------------------------------------------------------------------
+# ⚠️ 위 ANALYSIS_A_PERMUTATION_COUNT(200), ANALYSIS_B_PERMUTATION_COUNT(200)도
+# 검증되지 않은 관행값이었다. 다만 부트스트랩(Hanley-McNeil)과는 다른 이론적
+# 근거를 쓴다 - 순열검정은 "관측값을 넘는 순열의 비율"이 이항분포를 따르므로,
+# Clopper-Pearson 신뢰구간 공식으로 "이 정도 반복이면 p값에 대한 결론이
+# 확실하다"는 지점을 직접 계산할 수 있다(부트스트랩의 OOB 모델재학습 같은
+# 추가 구조적 변동성이 없어 이론값에 항상 안정적으로 수렴함 - 시드 3개가
+# 정확히 같은 지점에서 멈춤).
+#
+# 실데이터 검증: 전체데이터·작은세그먼트 모두 일관되게 60회에서 멈춤(200회
+# 대비 3.3배 절감) - 부트스트랩과 달리 표본크기가 아니라 "효과의 크기
+# (관측 AUC가 우연분포에서 얼마나 떨어져 있는지)"가 멈춤시점을 좌우함.
+SEQUENTIAL_PERMUTATION_CONFIDENCE = 0.95   # Clopper-Pearson 신뢰수준
+SEQUENTIAL_PERMUTATION_CHECK_EVERY = 10
+SEQUENTIAL_PERMUTATION_MAX_ITER = 500
 
 # ---------------------------------------------------------------------------
 # 분석B — Ⓐ패턴탐지, Ⓑ적절성검증, Ⓒ부트스트랩CI
@@ -48,7 +93,8 @@ ANALYSIS_A_MAX_ITERATIONS = 5             # ②③ 미통과시 인접구간 통
 # 사람이 고정하지 않는다 - max_depth=2 결정나무의 importance>0 결과를 전부
 # 쓴다(analysis_b.find_top_risk_attributes). 트리의 깊이 제약이 자연스러운
 # 멈춤 기준이 되어, 세그먼트마다 1~3개로 데이터가 직접 개수를 결정한다.
-ANALYSIS_B_PERMUTATION_COUNT = 200
+# ⚠️ 예전 ANALYSIS_B_PERMUTATION_COUNT(200)도 더 이상 쓰이지 않음 - Ⓑ의
+# 반복횟수도 분석A와 동일하게 순차적 조기중단으로 자동화됨
 ANALYSIS_B_BOOTSTRAP_COUNT = 300  # 분석A·서브트랙Q와 동일 - 표본부족 위험이 더 큰데 반복은 적었던 비일관성 수정
 
 # ---------------------------------------------------------------------------
@@ -95,12 +141,11 @@ DEFAULT_CLASSIFICATION_THRESHOLD = 0.5
 # ---------------------------------------------------------------------------
 # 개발/검증 시 빠르게 돌려보고 싶을 때 (기본값 대신 이 묶음을 넘기면 됨)
 # 결과의 '정확도'는 떨어지지만 '구조 검증'에는 충분 - 실제 제출/운영 시에는
-# 위 기본값(ANALYSIS_A_PERMUTATION_COUNT=200 등)을 사용할 것.
+# 위 기본값(ANALYSIS_A_BOOTSTRAP_COUNT=300 등)을 사용할 것. 순열검정/부트스트랩의
+# 반복횟수는 이제 순차적 조기중단으로 자동화되어 이 오버라이드가 더 이상 필요 없음.
 # ---------------------------------------------------------------------------
 FAST_DEV_OVERRIDES = {
-    "ANALYSIS_A_PERMUTATION_COUNT": 20,
     "ANALYSIS_A_BOOTSTRAP_COUNT": 20,
-    "ANALYSIS_B_PERMUTATION_COUNT": 20,
     "ANALYSIS_B_BOOTSTRAP_COUNT": 20,
     "SUBTRACK_Q_PERMUTATION_COUNT": 30,
     "SUBTRACK_Q_BOOTSTRAP_COUNT": 30,
