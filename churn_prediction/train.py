@@ -50,7 +50,6 @@ from evaluate import (  # noqa: E402
     check_segment_label_incremental_contribution,
     compare_stage_metrics,
     estimate_fn_cost,
-    find_recall_drop_threshold,
 )
 from feature_engineering import load_segment_rules, prepare_model_inputs  # noqa: E402
 from preprocessing import run_preprocessing  # noqa: E402
@@ -94,11 +93,13 @@ def main(csv_path: str, rules_path: str):
     print(f"      feature_cols_3 : {len(inputs['feature_cols_3'])}개 (segment_* 포함)")
 
     print("[3/6] 1·2·3단계 + 보조 MLP 학습")
-    stage_results = train_all_stages(inputs)
+    stage_results, xgb_search_result = train_all_stages(inputs)
+    print(f"      XGBoost 하이퍼파라미터 자동탐색 결과: {xgb_search_result.best_params} "
+          f"(2단계에서 GridSearchCV로 탐색, 3단계가 그대로 물려받음)")
     for key, result in stage_results.items():
         print(f"      {result.name} 학습 완료 (피처 {len(result.feature_cols)}개)")
 
-    print("[4/6] 평가지표 비교")
+    print("[4/6] 평가지표 비교 (각 모델별 권장 임계값으로 평가 - 0.5 고정 아님)")
     metrics_df = compare_stage_metrics(stage_results, inputs)
     print(metrics_df.to_string())
 
@@ -110,11 +111,12 @@ def main(csv_path: str, rules_path: str):
           f"AUC {contribution['auc_increment']:+.4f}")
     print(f"      ※ {contribution['note']}")
 
-    threshold = find_recall_drop_threshold(
-        inputs["y_test"],
-        stage_results["stage3"].model.predict_proba(inputs["X_test_tree_3"])[:, 1],
-    )
-    print(f"\n      권장 분류 임계값(Recall 급락 직전): {threshold:.4f}")
+    # ⚠️ [수정] 예전에는 여기서 find_recall_drop_threshold를 또 호출해서
+    # 메타데이터에만 기록하고, compare_stage_metrics는 별개로 항상 0.5를 썼다.
+    # 이제 compare_stage_metrics가 이미 메인 모델(3단계)의 권장 임계값으로
+    # 평가했으므로, 그 결과를 그대로 가져온다 - 중복 계산 제거 + 평가에 실제 반영.
+    threshold = metrics_df.loc["3단계_XGBoost_세그먼트포함", "threshold"]
+    print(f"\n      메인 모델(3단계) 권장 분류 임계값(Recall 급락 직전): {threshold:.4f}")
 
     fn_cost = estimate_fn_cost(inputs["df_train_raw"])
     print(f"      FN 비용 근사 추정: {fn_cost:.0f} (참고용, FP비용은 추정 불가)")
@@ -142,6 +144,7 @@ def main(csv_path: str, rules_path: str):
         "rules_path": str(Path(rules_path).resolve()),
         "n_train": len(df_train),
         "n_test": len(df_test),
+        "xgboost_best_params": xgb_search_result.best_params,
         "main_model_f2": round(float(main_metrics["f2"]), 4),
         "main_model_auc": round(float(main_metrics["model_auc"]), 4),
         "recommended_threshold": round(threshold, 4),

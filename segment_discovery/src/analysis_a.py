@@ -31,6 +31,7 @@ def find_boundaries_pruned_tree(
     df_train: pd.DataFrame,
     cv_folds: int = 5,
     random_state: int = 42,
+    max_boundaries: int | None = None,
 ) -> tuple[list[float], float]:
     """
     가지치기 회귀나무로 tenure 기준 경계 탐지.
@@ -39,10 +40,20 @@ def find_boundaries_pruned_tree(
     절대 샘플링하지 말고 전체를 다 탐색할 것 - 일부만 샘플링하면 탐색 그리드
     설정에 따라 결과 K값이 미세하게 흔들리는 그리드 민감성이 확인됨.
 
+    Parameters
+    ----------
+    max_boundaries : ②③ 검증에 실패해 인접 구간을 통합해야 할 때 쓰는 옵션.
+        None(기본값)이면 교차검증 최적 alpha를 그대로 쓴다(평소 동작).
+        정수를 주면 "교차검증 성능이 가장 좋으면서도 경계 개수가 그 값
+        이하인" 후보를 선택한다 - 같은 df_train으로 재실행해도 항상 같은
+        결과만 나오던 문제(통합 로직이 죽은 코드였던 버그)를 해결한다.
+        alpha가 클수록(가지치기가 강할수록) 경계가 줄어드는 단조관계를
+        이용해, "이전 결과보다 단순한 트리를 강제로 찾는다".
+
     Returns
     -------
     boundaries : 확정된 경계(tenure 개월) 리스트
-    best_alpha : 교차검증으로 선택된 ccp_alpha
+    best_alpha : 선택된 ccp_alpha (max_boundaries 적용 시 교차검증 최적값이 아닐 수 있음)
     """
     monthly = df_train.groupby("tenure")["ChurnFlag"].agg(["mean", "count"]).reset_index()
     X = monthly[["tenure"]].values
@@ -61,7 +72,30 @@ def find_boundaries_pruned_tree(
         scoring="neg_mean_squared_error",
     )
     grid.fit(X, y, sample_weight=sample_weight)
-    best_alpha = grid.best_params_["ccp_alpha"]
+
+    if max_boundaries is None:
+        best_alpha = grid.best_params_["ccp_alpha"]
+    else:
+        # 교차검증 성능 순으로 정렬한 뒤, "경계 개수가 max_boundaries 이하인"
+        # 첫 후보를 선택 - alpha가 클수록(가지치기가 강할수록) 경계가 줄어드는
+        # 단조관계를 이용해 "이전보다 단순한 트리"를 강제로 찾는다.
+        cv_results = pd.DataFrame(grid.cv_results_).sort_values(
+            "mean_test_score", ascending=False
+        )
+        best_alpha = None
+        for alpha_candidate in cv_results["param_ccp_alpha"]:
+            candidate_tree = DecisionTreeRegressor(
+                random_state=random_state, ccp_alpha=alpha_candidate
+            )
+            candidate_tree.fit(X, y, sample_weight=sample_weight)
+            n_boundaries = sum(1 for t in candidate_tree.tree_.threshold if t != -2)
+            if n_boundaries <= max_boundaries:
+                best_alpha = alpha_candidate
+                break
+        if best_alpha is None:
+            # 가장 강한 가지치기(가장 큰 alpha)로도 max_boundaries를 못 만족하면
+            # 그 alpha를 그대로 사용 (경계 0개, 즉 세그먼트 1개로 수렴)
+            best_alpha = float(ccp_alphas.max())
 
     final_tree = DecisionTreeRegressor(random_state=random_state, ccp_alpha=best_alpha)
     final_tree.fit(X, y, sample_weight=sample_weight)
@@ -71,9 +105,87 @@ def find_boundaries_pruned_tree(
     return boundaries, float(best_alpha)
 
 
+def find_stable_rf_n_estimators(
+    df_train: pd.DataFrame,
+    candidates: Sequence[int] = tuple(config.ANALYSIS_A_RF_N_ESTIMATORS_CANDIDATES),
+    seeds: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8),
+    improvement_threshold: float = config.ANALYSIS_A_RF_STABILITY_IMPROVEMENT_THRESHOLD,
+    patience: int = 2,
+) -> tuple[int, pd.DataFrame]:
+    """
+    "RF 보조검증용 트리 개수가 몇 개면 충분한가"를 데이터가 직접 결정한다.
+
+    분석A의 ccp_alpha(교차검증으로 예측오차가 더 안 줄어드는 지점을 찾음)와
+    같은 원리 - 트리 개수를 늘려가며 "1위 분기점의 득표율이 시드를 바꿔도
+    얼마나 흔들리는지(표준편차)"를 측정하고, 더 늘려도 표준편차가 의미있게
+    줄지 않는 지점에서 멈춘다.
+
+    ⚠️ [수정] 처음에는 "한 단계라도 개선이 없으면 즉시 멈춤"으로 짰는데,
+    실데이터 검증 결과 표준편차 자체가 시드 8개만으로는 단조롭게 줄지 않고
+    중간에 노이즈로 한두 번 튀는 게 확인됨(예: 100->150에서 살짝 증가했다가
+    200부터 다시 감소). 그래서 "연속 patience회 모두 개선이 없을 때"만
+    멈추도록 완화 - 단발성 노이즈로 너무 일찍 멈추는 것을 방지.
+
+    ⚠️ K-means의 K값(서브트랙Q)과 다른 점: 여기는 "득표율이 안정적인가"라는
+    단 하나의 목표만 있어 트리를 늘릴수록 좋아지거나 그대로일 뿐, 서로
+    충돌하는 두 목표(K-means의 결합효과 vs 표본안정성)가 없다. 그래서 단일
+    기준으로 완전 자동화가 가능하다.
+
+    Returns
+    -------
+    stable_n : 충분히 안정적이라고 판단된 트리 개수
+    diagnostics : 후보별 (n_estimators, std) 표 (보고서/로그용)
+    """
+    monthly = df_train.groupby("tenure")["ChurnFlag"].agg(["mean", "count"]).reset_index()
+    X = monthly[["tenure"]].values
+    y = monthly["mean"].values
+    sample_weight = np.sqrt(monthly["count"].values)
+
+    rows = []
+    stds = []
+    no_improvement_streak = 0
+    stable_n = candidates[-1]  # 끝까지 안정화 안 되면 가장 큰 후보를 안전하게 사용
+
+    for n in candidates:
+        top1_rates = []
+        for seed in seeds:
+            rf = RandomForestRegressor(
+                n_estimators=n, max_depth=3, min_samples_leaf=5, random_state=seed,
+            )
+            rf.fit(X, y, sample_weight=sample_weight)
+            all_thresholds = []
+            for estimator in rf.estimators_:
+                th = estimator.tree_.threshold[estimator.tree_.threshold != -2]
+                all_thresholds.extend(th.round(1))
+            if not all_thresholds:
+                continue
+            counts = Counter(all_thresholds)
+            top1_value, top1_count = counts.most_common(1)[0]
+            top1_rates.append(top1_count / n)
+
+        std = float(np.std(top1_rates)) if top1_rates else float("nan")
+        rows.append({"n_estimators": n, "top1_rate_std": std})
+        stds.append(std)
+
+        if len(stds) >= 2 and stds[-2] > 0:
+            improvement = (stds[-2] - stds[-1]) / stds[-2]
+            if improvement < improvement_threshold:
+                no_improvement_streak += 1
+            else:
+                no_improvement_streak = 0
+
+            if no_improvement_streak >= patience:
+                # 연속 patience회 동안 의미있는 개선이 없었음 -> 이전 단계가 충분히 안정적이었던 지점
+                stable_n = candidates[len(stds) - 1 - (patience - 1)]
+                break
+
+    diagnostics = pd.DataFrame(rows)
+    return stable_n, diagnostics
+
+
 def random_forest_boundary_votes(
     df_train: pd.DataFrame,
-    n_estimators: int = 250,
+    n_estimators: int | None = None,
     random_state: int = 42,
     top_n: int = 10,
 ) -> list[tuple[float, int]]:
@@ -81,10 +193,18 @@ def random_forest_boundary_votes(
     랜덤포레스트의 모든 개별 트리에서 분기점(threshold)을 수집해 빈도 집계.
     ①의 보조 검증용 - 단일 결정나무를 대체하지 않음.
 
+    n_estimators=None(기본값)이면 find_stable_rf_n_estimators로 트리 개수를
+    데이터에서 직접 찾는다 - 사람이 250 같은 숫자를 미리 고정하지 않는다.
+    (실데이터 확인 결과 우리 데이터에서는 n=200~250 부근에서 안정화됨 - 단,
+    이건 참고용이고 코드가 매번 그 데이터에 맞게 다시 계산한다)
+
     Returns
     -------
     top_candidates : (분기점, 득표수) 리스트, 득표 많은 순
     """
+    if n_estimators is None:
+        n_estimators, _ = find_stable_rf_n_estimators(df_train)
+
     monthly = df_train.groupby("tenure")["ChurnFlag"].agg(["mean", "count"]).reset_index()
     X = monthly[["tenure"]].values
     y = monthly["mean"].values
@@ -244,20 +364,35 @@ def run_analysis_a(
     """
     ①→②→③ 사이클. ②③ 미통과 시 인접 구간 통합 후 ①부터 재실행.
 
+    ⚠️ [버그 수정] 예전 코드는 미통과 시 boundaries.pop()으로 경계를 줄여놓고도
+    바로 다음 줄에서 current_df를 원본(df_train)으로 되돌렸다. find_boundaries_
+    pruned_tree는 같은 입력에 항상 같은 출력을 내는 결정론적 함수라, 다음
+    반복에서 ①을 "원본으로" 다시 돌리면 통합 전과 완전히 똑같은 경계가
+    다시 나왔다 - 즉 통합 로직이 실제로는 전혀 반영되지 않는 죽은 코드였다
+    (실제 검증: 같은 df_train으로 find_boundaries_pruned_tree를 두 번 호출하면
+    결과가 항상 동일함을 확인).
+
+    수정: max_boundaries(이전 반복의 경계 개수 - 1)를 ①에 직접 전달해,
+    "이전보다 단순한 트리를 강제로 찾으라"고 명시적으로 요구한다. 이러면
+    재시도가 실제로 더 적은 경계를 가진 새로운 결과를 만들어낸다.
+
     Returns
     -------
     result : dict with keys
         boundaries, alpha, rf_votes, rf_agreement,
         segment_only_auc, p_value, ci_low, ci_high, n_iterations
     """
-    current_df = df_train.copy()
+    max_boundaries = None  # 첫 시도는 교차검증 최적값 그대로 (제약 없음)
 
     for iteration in range(max_iterations):
-        boundaries, alpha = find_boundaries_pruned_tree(current_df)
-        rf_votes = random_forest_boundary_votes(current_df)
+        boundaries, alpha = find_boundaries_pruned_tree(
+            df_train, max_boundaries=max_boundaries
+        )
+        stable_n_estimators, rf_n_diagnostics = find_stable_rf_n_estimators(df_train)
+        rf_votes = random_forest_boundary_votes(df_train, n_estimators=stable_n_estimators)
         rf_agreement = check_boundary_against_rf_votes(boundaries, rf_votes)
 
-        current_df = current_df.copy()
+        current_df = df_train.copy()
         current_df["segment"] = make_segment_column(current_df, boundaries)
 
         p_value, _ = permutation_test_for_segment(
@@ -273,6 +408,7 @@ def run_analysis_a(
                 "alpha": alpha,
                 "rf_votes": rf_votes,
                 "rf_agreement": rf_agreement,
+                "rf_n_estimators_used": stable_n_estimators,  # 데이터가 직접 찾은 트리 개수
                 "segment_only_auc": mean_auc,
                 "p_value": p_value,
                 "ci_low": ci_low,
@@ -280,16 +416,10 @@ def run_analysis_a(
                 "n_iterations": iteration + 1,
             }
 
-        # 미통과: 가장 작은 세그먼트를 인접 구간과 통합 (경계 1개 제거) 후 재실행
+        # 미통과: 다음 반복에서 ①이 "경계 1개 더 적은" 트리를 강제로 찾도록 함
         if len(boundaries) <= 1:
-            break  # 더 통합할 경계가 없으면 중단
-        seg_counts = current_df["segment"].value_counts()
-        smallest_seg = seg_counts.idxmin()
-        # 가장 작은 세그먼트에 인접한 경계를 제거
-        boundary_idx = min(smallest_seg, len(boundaries) - 1)
-        boundaries.pop(boundary_idx)
-        # 다음 반복에서 ①이 다시 처음부터 찾도록 current_df 는 원본으로 되돌림
-        current_df = df_train.copy()
+            break  # 더 줄일 경계가 없으면 중단 (세그먼트 1개=통합 불가능한 한계)
+        max_boundaries = len(boundaries) - 1
 
     # max_iterations 내 통과 못하면 마지막 결과라도 반환 (경고 표시)
     return {
@@ -297,6 +427,7 @@ def run_analysis_a(
         "alpha": alpha,
         "rf_votes": rf_votes,
         "rf_agreement": rf_agreement,
+        "rf_n_estimators_used": stable_n_estimators,
         "segment_only_auc": mean_auc,
         "p_value": p_value,
         "ci_low": ci_low,

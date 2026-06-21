@@ -6,12 +6,18 @@
 분석A의 "세그먼트단독 AUC"와는 완전히 다른 모델·다른 목적의 수치다.
 코드 변수명도 model_auc / segment_only_auc 로 구분해서 절대 혼용하지 말 것.
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score, auc, f1_score, fbeta_score, precision_recall_curve,
     precision_score, recall_score, roc_auc_score,
 )
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import config  # noqa: E402
 
 
 def compute_all_metrics(y_true: pd.Series, y_proba: np.ndarray, threshold: float = 0.5) -> dict:
@@ -36,19 +42,58 @@ def compute_all_metrics(y_true: pd.Series, y_proba: np.ndarray, threshold: float
     }
 
 
-def find_recall_drop_threshold(y_true: pd.Series, y_proba: np.ndarray) -> float:
+def find_recall_drop_threshold(
+    y_true: pd.Series, y_proba: np.ndarray,
+    min_recall: float = config.THRESHOLD_SEARCH_MIN_RECALL,
+    window: int = config.THRESHOLD_SEARCH_WINDOW,
+) -> float:
     """
     분류 임계값: 0.5 고정 대신, PR곡선에서 "Recall이 급격히 꺾이기 직전 지점" 채택.
     (기획_메모.md 2.3 참조)
+
+    ⚠️ [버그 수정] 예전에는 PR곡선 전 구간(recall이 거의 0인 영역까지 포함)에서
+    "바로 다음 점과의 하락폭"만 비교했는데, 두 가지 문제가 있었다.
+
+    1) recall이 이미 매우 낮은(이탈자를 거의 다 놓친) 구간에서는 한 점 차이의
+       하락폭이 절대적으로 작아서(예: -0.00713) 노이즈와 진짜 신호를 구분하기
+       어렵다 - 실제로 recall=0.74->0.73 구간(threshold=0.33, 합리적인 지점)과
+       recall=0.06->0.055 구간(threshold=0.83, 이미 의미 없는 영역)이 거의
+       같은 하락폭으로 동률이 나서, 부동소수점 오차로 후자가 선택되는 버그가
+       실제로 발생함(2단계 XGBoost에서 threshold=0.83이 나와 Recall이
+       0.06까지 붕괴).
+    2) 한 점(바로 다음 점)만 보는 비교는 RF 트리개수 자동탐지에서 겪었던
+       것과 같은 "단발성 노이즈에 취약한" 구조다.
+
+    수정: ① min_recall(기본 0.5) 이상인 구간으로 후보를 한정한다 - "이미
+    의미있게 많은 이탈고객을 놓친" 구간은 처음부터 탐색 대상에서 뺀다.
+    ② 한 점 차이 대신 윈도우(기본 20포인트) 평균 하락률을 비교해, 단일
+    포인트의 미세한 흔들림이 아니라 "추세적으로 급해지는 지점"을 찾는다.
     """
     precisions, recalls, thresholds = precision_recall_curve(y_true, y_proba)
-    # recall 변화율(미분)이 가장 급격해지는 지점을 찾음 (recall 내림차순 정렬되어 있음)
-    recall_diffs = np.diff(recalls)
-    if len(recall_diffs) == 0:
+
+    # recalls는 thresholds보다 1개 더 길고 내림차순 정렬됨(첫 원소가 1.0).
+    # recall >= min_recall 인 구간으로 후보를 한정 - "이미 너무 많은 이탈자를
+    # 놓친" 구간은 비교 대상에서 제외한다.
+    valid_mask = recalls[:-1] >= min_recall  # thresholds와 길이를 맞추기 위해 마지막 원소 제외
+    valid_indices = np.where(valid_mask)[0]
+    if len(valid_indices) < window + 1:
+        # 유효 구간이 너무 좁으면 기준을 완화하지 않고 안전하게 0.5 반환
         return 0.5
-    sharpest_drop_idx = int(np.argmin(recall_diffs))  # 가장 큰 음의 변화
-    sharpest_drop_idx = min(sharpest_drop_idx, len(thresholds) - 1)
-    return float(thresholds[sharpest_drop_idx])
+
+    recalls_in_range = recalls[valid_indices[0]: valid_indices[-1] + 2]
+    thresholds_in_range = thresholds[valid_indices[0]: valid_indices[-1] + 1]
+
+    # 윈도우 평균 기반 변화율: i번째 지점에서 "앞으로 window개 동안의 평균 하락 속도"
+    window = min(window, len(recalls_in_range) - 1)
+    if window < 1:
+        return 0.5
+    windowed_diffs = (recalls_in_range[window:] - recalls_in_range[:-window]) / window
+
+    if len(windowed_diffs) == 0:
+        return 0.5
+    sharpest_drop_idx = int(np.argmin(windowed_diffs))
+    sharpest_drop_idx = min(sharpest_drop_idx, len(thresholds_in_range) - 1)
+    return float(thresholds_in_range[sharpest_drop_idx])
 
 
 def estimate_fn_cost(df_with_churn_flag: pd.DataFrame) -> float:
@@ -65,7 +110,16 @@ def estimate_fn_cost(df_with_churn_flag: pd.DataFrame) -> float:
 
 
 def compare_stage_metrics(stage_results: dict, inputs: dict) -> pd.DataFrame:
-    """1·2·3단계 + 보조 MLP 의 평가지표를 한 표로 비교"""
+    """
+    1·2·3단계 + 보조 MLP 의 평가지표를 한 표로 비교.
+
+    ⚠️ [수정] 예전에는 find_recall_drop_threshold로 권장 임계값을 구해놓고도
+    여기서는 항상 threshold=0.5로 평가했다(권장값은 콘솔 출력/메타데이터
+    저장용으로만 쓰이고 실제 Precision/Recall/F1/F2 계산에는 반영 안 됨).
+    이제 각 모델마다 자신의 PR곡선에서 권장 임계값을 직접 구해 그 값으로
+    평가한다 - "0.5 고정 대신 Recall이 급격히 꺾이기 직전 지점을 채택한다"
+    (기획_메모.md 2.3)는 원칙이 실제 평가지표에 반영되도록.
+    """
     rows = []
     stage_to_X_test = {
         "stage1": inputs["X_test_linear_12"],
@@ -76,7 +130,8 @@ def compare_stage_metrics(stage_results: dict, inputs: dict) -> pd.DataFrame:
     for key, result in stage_results.items():
         X_test = stage_to_X_test[key]
         y_proba = result.model.predict_proba(X_test)[:, 1]
-        metrics = compute_all_metrics(inputs["y_test"], y_proba)
+        threshold = find_recall_drop_threshold(inputs["y_test"], y_proba)
+        metrics = compute_all_metrics(inputs["y_test"], y_proba, threshold=threshold)
         metrics["stage"] = result.name
         rows.append(metrics)
     return pd.DataFrame(rows).set_index("stage")

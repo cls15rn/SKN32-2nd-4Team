@@ -45,11 +45,21 @@ def _encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def find_top_risk_attributes(
-    df_segment: pd.DataFrame, top_n: int = 2, random_state: int = 42,
+    df_segment: pd.DataFrame, random_state: int = 42,
 ) -> list[str]:
     """
     세그먼트 안에서 가지치기 결정나무로 "어떤 속성이 이탈 분기에 가장 크게
-    기여하는지" 확인 (feature_importances_ 기준 상위 N개)
+    기여하는지" 확인.
+
+    ⚠️ [수정] 예전에는 top_n=2로 "정확히 2개"를 사람이 미리 정해서 잘라냈는데,
+    이건 우리가 K-means/분석A에서 거듭 경계해온 "사람이 결과를 미리 정한다"
+    패턴과 같은 문제였다. 실제로 세그먼트0은 3번째 속성(OnlineSecurity)이
+    추가 판별력(AUC +0.0156)을 주는데 top_n=2가 그걸 잘라내고 있었다.
+
+    그래서 "importance > 0인 속성을 전부" 반환하도록 바꿨다 - 개수를 사람이
+    정하지 않고, max_depth=2(트리 자체의 제약)가 자연스럽게 막아주는 만큼만
+    데이터가 결정하게 한다. 실데이터 확인 결과 세그먼트마다 1~3개로 자연스럽게
+    달라짐(노이즈로 끝없이 늘어나지 않음) - max_depth가 이미 안전장치 역할.
     """
     df_enc = _encode_categoricals(df_segment)
     feature_cols = CATEGORICAL_COLS + NUMERIC_COLS
@@ -64,7 +74,7 @@ def find_top_risk_attributes(
 
     importances = pd.Series(tree.feature_importances_, index=feature_cols)
     importances = importances[importances > 0].sort_values(ascending=False)
-    return importances.head(top_n).index.tolist()
+    return importances.index.tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +186,7 @@ def bootstrap_attribute_auc_ci(
 # ---------------------------------------------------------------------------
 
 def run_analysis_b(
-    df_train_with_segment: pd.DataFrame, top_n: int = config.ANALYSIS_B_TOP_N_ATTRIBUTES,
+    df_train_with_segment: pd.DataFrame,
 ) -> pd.DataFrame:
     """
     각 세그먼트에 대해 Ⓐ→Ⓑ→Ⓒ 를 수행해 결과를 표로 정리.
@@ -192,7 +202,7 @@ def run_analysis_b(
         if df_segment["ChurnFlag"].nunique() < 2 or len(df_segment) < 50:
             continue
 
-        top_attrs = find_top_risk_attributes(df_segment, top_n=top_n)
+        top_attrs = find_top_risk_attributes(df_segment)
         auc = attribute_based_auc(df_segment, top_attrs)
         p_value = permutation_test_for_attributes(df_segment, top_attrs)
         mean_auc, ci_low, ci_high = bootstrap_attribute_auc_ci(df_segment, top_attrs)
