@@ -485,7 +485,8 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
 def render():
     T.html(T.page_header(
         "고객 이탈 예측 대시보드",
-        "통신사 가입 고객 데이터로 이탈을 예측·분석하고, 한정 예산으로 가장 효과적인 "
+        "순열·부트스트랩 자동화 루프로 검증된 생애주기 세그먼트·위험속성·위험신호 분석 체계와 이원화 MLOps 아키텍처를 결합한 고객 이탈 예측 시스템 입니다."
+        " 통신사 가입 고객 데이터로 이탈을 예측·분석하고, 한정 예산으로 가장 효과적인 "
         "대응 지점을 찾습니다."))
 
     df, meta = D.get_active_df()

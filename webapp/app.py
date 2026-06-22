@@ -25,13 +25,13 @@ from lib import theme as T  # noqa: E402
 from lib import data as D  # noqa: E402
 from views import overview, priority, analysis, whatif, roi  # noqa: E402
 
-st.set_page_config(page_title="고객 이탈 예측 대시보드",
+st.set_page_config(page_title="고객 이탈 예측 시스템",
                    page_icon="📉", layout="wide")
 T.inject()
 
 # ---- 사이드바: 브랜드 (nav 위) ----
 st.sidebar.markdown(
-    '<div class="sb-brand">👥 고객 이탈 예측'
+    '<div class="sb-brand">👥 고객 이탈 예측 시스템'
     '<span class="sb-sub">Customer Churn Prediction</span></div>',
     unsafe_allow_html=True)
 
