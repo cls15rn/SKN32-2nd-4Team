@@ -158,3 +158,97 @@ def check_segment_label_incremental_contribution(
             "서사를 유지할 것 - 메인 증거는 분석A임을 보고서에 명시"
         ),
     }
+
+
+def compute_xgboost_feature_importance(model, top_n: int = 15) -> pd.Series:
+    """
+    3단계(메인) XGBoost 모델의 gain 기반 feature importance를 계산한다.
+
+    ⚠️ [실측 확인, 기획_메모.md 6.2 보강] "segment_*를 검증된 랜드마크 피처로
+    선탑재하면 최상위 분기 기준으로 선택될 것"이라는 가설을 실제 트리를
+    열어 검증한 결과, segment_*가 루트(최상위) 노드로 선택된 트리는
+    0/100개였고 feature_importances_ 순위도 14~38위(2개는 정확히 0)로
+    낮았다 - 1위는 Contract_Month-to-month, 2위는 tenure.
+
+    XGBoost는 "통계적으로 검증됐는가"를 모르고 오직 information gain(이
+    피처가 손실을 얼마나 줄이는가)만 본다 - segment가 검증된 피처라도,
+    tenure 원본이 이미 그 정보를 더 세밀하게 담고 있으면 모델은 원본을
+    택한다. 이 함수는 그 사실을 코드로 직접 확인하기 위해 존재한다.
+    """
+    importances = pd.Series(
+        model.feature_importances_, index=model.feature_names_in_,
+    ).sort_values(ascending=False)
+    return importances.head(top_n)
+
+
+def compute_xgboost_root_node_distribution(model) -> pd.Series:
+    """
+    모든 부스팅 트리의 루트(최상위) 노드 분기 기준 피처를 집계한다.
+
+    feature_importances_(gain 누적)만으로는 "랜드마크 피처가 트리 구조의
+    뼈대를 이루는가"라는 구조적 질문에 직접 답하지 못한다 - 이 함수는 각
+    트리의 첫 분기(depth=0)가 어떤 피처를 쓰는지 직접 파싱해 집계한다.
+    segment_* 가 진짜 "뼈대"라면 여기서 상위권에 자주 등장해야 한다.
+    """
+    booster = model.get_booster()
+    dumps = booster.get_dump(dump_format="text")
+    root_features = [
+        d.split("\n")[0].split("[")[1].split("]")[0].split("<")[0]
+        for d in dumps
+    ]
+    return pd.Series(root_features).value_counts()
+
+
+def compute_shap_importance(model, X_test: pd.DataFrame, top_n: int = 15) -> pd.Series:
+    """
+    3단계(메인) XGBoost 모델의 SHAP 평균 |영향력|을 계산한다.
+
+    feature_importances_(gain)는 모델 학습 과정에서의 기여도를, SHAP은
+    실제 예측 시점에서 각 피처가 결과를 얼마나 밀어 올리는지를 본다는 점에서
+    서로 다른 측정 방식이다 - 두 방법이 같은 결론(segment의 영향력이
+    낮다)을 보이면, 측정 방식에 따른 우연이 아니라는 교차검증이 된다.
+
+    Returns
+    -------
+    top_n개 피처의 평균 |SHAP 영향력| (내림차순)
+    """
+    import shap
+
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_test)
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    importance = pd.Series(mean_abs_shap, index=X_test.columns).sort_values(ascending=False)
+    return importance.head(top_n)
+
+
+def summarize_segment_feature_ranking(
+    feature_importance: pd.Series, shap_importance: pd.Series, all_feature_names: list[str],
+) -> pd.DataFrame:
+    """
+    segment_* 피처가 두 측정방식(gain, SHAP)에서 각각 몇 위인지 표로 정리한다.
+
+    ⚠️ feature_importance/shap_importance는 top_n으로 잘린 Series일 수
+    있으므로, 전체 순위를 다시 매기려면 호출 측에서 top_n 없이(전체) 계산한
+    결과를 넘겨야 한다 - 이 함수는 두 Series를 그대로 신뢰하고 segment_*만
+    필터링한다.
+    """
+    rows = []
+    for name in all_feature_names:
+        if not name.startswith("segment_"):
+            continue
+        gain_rank = (
+            list(feature_importance.index).index(name) + 1
+            if name in feature_importance.index else None
+        )
+        shap_rank = (
+            list(shap_importance.index).index(name) + 1
+            if name in shap_importance.index else None
+        )
+        rows.append({
+            "feature": name,
+            "gain_importance": feature_importance.get(name, 0.0),
+            "gain_rank": gain_rank,
+            "shap_importance": shap_importance.get(name, 0.0),
+            "shap_rank": shap_rank,
+        })
+    return pd.DataFrame(rows)

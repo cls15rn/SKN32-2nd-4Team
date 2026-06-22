@@ -6,11 +6,13 @@
       54.5
     ],
     "alpha": 0.0010338016841760556,
-    "rf_agreement": "True",
-    "segment_only_auc": 0.7209827237879227,
+    "rf_n_estimators_used": 200,
+    "n_bootstrap_used": 40,
+    "n_permutations_used": 60,
+    "segment_only_auc": 0.7223379490665229,
     "p_value": 0.0,
-    "ci_low": 0.7131311112546486,
-    "ci_high": 0.7355174677858323,
+    "ci_low": 0.7034024915272804,
+    "ci_high": 0.73734412104213,
     "n_iterations": 1
   },
   "analysis_b": [
@@ -20,12 +22,15 @@
       "churn_rate": 0.4967129291453616,
       "top_attributes": [
         "MonthlyCharges",
-        "InternetService"
+        "InternetService",
+        "OnlineSecurity"
       ],
-      "attribute_auc": 0.7419234323370733,
+      "attribute_auc": 0.7575184270788606,
       "p_value": 0.0,
-      "ci_low": 0.7500692906162487,
-      "ci_high": 0.7919542290179449
+      "ci_low": 0.722302897555709,
+      "ci_high": 0.7810559864850172,
+      "n_bootstrap_used": 40,
+      "n_permutations_used": 60
     },
     {
       "segment": 1,
@@ -36,8 +41,10 @@
       ],
       "attribute_auc": 0.731518137348326,
       "p_value": 0.0,
-      "ci_low": 0.7431245264168999,
-      "ci_high": 0.8164079475621007
+      "ci_low": 0.6849994761110494,
+      "ci_high": 0.7743169565081967,
+      "n_bootstrap_used": 40,
+      "n_permutations_used": 60
     },
     {
       "segment": 2,
@@ -49,8 +56,10 @@
       ],
       "attribute_auc": 0.7902974291830008,
       "p_value": 0.0,
-      "ci_low": 0.8019561383300905,
-      "ci_high": 0.8476956069450974
+      "ci_low": 0.751201154045534,
+      "ci_high": 0.8181093692292957,
+      "n_bootstrap_used": 40,
+      "n_permutations_used": 60
     },
     {
       "segment": 3,
@@ -62,8 +71,10 @@
       ],
       "attribute_auc": 0.7677051965678576,
       "p_value": 0.0,
-      "ci_low": 0.8033871926643432,
-      "ci_high": 0.8680138880107551
+      "ci_low": 0.7114583643454433,
+      "ci_high": 0.804047742716736,
+      "n_bootstrap_used": 40,
+      "n_permutations_used": 60
     }
   ],
   "subtrack_q": {
@@ -76,8 +87,10 @@
     },
     "risk_count_only_auc": 0.7930403082023966,
     "p_value": 0.0,
+    "n_permutations_used": 60,
     "top_risk_count_value": 5,
-    "ci_low": 0.6192002881844381,
-    "ci_high": 0.6935158501440921
+    "ci_low": 0.6195605187319885,
+    "ci_high": 0.689193083573487,
+    "n_bootstrap_used": 40
   }
 }
