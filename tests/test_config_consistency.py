@@ -40,8 +40,11 @@ def _default(func, param_name):
     (analysis_b.attribute_based_auc, "cv_folds", "ANALYSIS_A_CV_FOLDS"),
     (analysis_b.permutation_test_for_attributes, "check_every", "SEQUENTIAL_PERMUTATION_CHECK_EVERY"),
     (analysis_b.bootstrap_attribute_auc_ci, "n_bootstrap", "ANALYSIS_B_BOOTSTRAP_COUNT"),
-    (subtrack_q.permutation_test_for_risk_count, "n_permutations", "SUBTRACK_Q_PERMUTATION_COUNT"),
-    (subtrack_q.bootstrap_top_risk_group_ci, "n_bootstrap", "SUBTRACK_Q_BOOTSTRAP_COUNT"),
+    (subtrack_q.bootstrap_top_risk_group_ci, "n_bootstrap", "SUBTRACK_Q_BOOTSTRAP_COUNT"),  # ⚠️ 레거시 호환용 함수 - find_stable_bootstrap_count_for_risk_group이 메인
+    (subtrack_q.permutation_test_for_risk_count, "p_threshold", "ANALYSIS_A_P_VALUE_THRESHOLD"),
+    (subtrack_q.permutation_test_for_risk_count, "check_every", "SEQUENTIAL_PERMUTATION_CHECK_EVERY"),
+    (subtrack_q.find_stable_bootstrap_count_for_risk_group, "check_every", "SEQUENTIAL_CHECK_EVERY"),
+    (subtrack_q.find_stable_bootstrap_count_for_risk_group, "max_iter", "SEQUENTIAL_MAX_ITER"),
     (subtrack_q.run_kmeans_exploration, "n_clusters", "SUBTRACK_Q_KMEANS_CLUSTERS"),
     (evaluate.find_recall_drop_threshold, "min_recall", "THRESHOLD_SEARCH_MIN_RECALL"),
     (evaluate.find_recall_drop_threshold, "window", "THRESHOLD_SEARCH_WINDOW"),

@@ -63,10 +63,34 @@ ANALYSIS_A_MAX_ITERATIONS = 5             # ②③ 미통과시 인접구간 통
 SEQUENTIAL_MAX_ITER = 500
 SEQUENTIAL_CHECK_EVERY = 10
 SEQUENTIAL_MIN_N_BEFORE_CHECK = 30   # 너무 적은 표본으로 CI폭을 재는 것 자체가 무의미해짐을 방지
-SEQUENTIAL_STRUCTURAL_GAP = 1.3      # OOB 방식의 구조적 변동성(모델 재학습)을 감안한 여유 - Hanley-McNeil은 "고정된 분류기"를 가정하므로
+SEQUENTIAL_STRUCTURAL_GAP = 1.3      # [콜드스타트 전용 폴백값] 관측 기록이 부족할 때만 쓰는 초기 안전망.
+# 표본 크기가 다르면 실제 gap비율도 다르다는 게 실측으로 확인됨(전체데이터
+# 1.065 vs 작은세그먼트 1.243) - 이 1.3을 고정해서 계속 쓰는 대신,
+# find_stable_bootstrap_count가 멈출 때마다 "이미 계산해놓은 값들로 공짜로
+# 계산되는" 그 실행의 실측 gap비율을 GAP_OBSERVATIONS_PATH에 누적 기록하고,
+# 다음 호출부터는 비슷한 표본크기의 과거 관측치 분位수를 안전 상한으로
+# 사용한다(gap_calibration.adaptive_structural_gap 참조) - 새 부트스트랩
+# 실행을 추가하지 않으므로 탐색비용이 전혀 들지 않는다. 관측치가
+# GAP_CALIBRATION_MIN_OBSERVATIONS 미만일 때만 이 고정값(1.3)을 그대로 쓴다.
 SEQUENTIAL_CEILING_PATIENCE = 2      # 상한 도달이 단발성 우연이 아닌지 연속 확인
 SEQUENTIAL_SELF_STABILITY_WINDOW = 5
 SEQUENTIAL_SELF_STABILITY_THRESHOLD = 0.05  # 상한에 못 도달해도(작은 표본 등) 무한반복 방지하는 안전망
+
+# ---------------------------------------------------------------------------
+# structural_gap 적응형 보정 — 탐색비용 없이 관측치를 누적·재사용 (3번 항목)
+# ---------------------------------------------------------------------------
+# 배경: SEQUENTIAL_STRUCTURAL_GAP(1.3)을 "데이터가 직접 추정"하게 만들려면
+# 보통 별도의 풀스케일 부트스트랩을 미리 돌려 실측 gap을 구해야 하는데,
+# 이는 본 작업과 같은 무게의 작업을 또 하는 것이라 탐색비용이 운영비용보다
+# 커지는 동일한 함정에 빠진다. 해법: 매 find_stable_bootstrap_count 호출이
+# 끝날 때 이미 계산된 (point_auc, n_positive, n_negative, 실측 ci_width)로
+# "그 실행의 실측 gap비율"을 추가 연산 없이 구해 기록만 한다. 분석A는
+# 검증사이클상 여러 세그먼트·여러 재시도에 걸쳐 반복 호출되므로, 별도
+# 실험 없이도 운영 중에 자연스럽게 관측치가 쌓인다.
+GAP_OBSERVATIONS_PATH = PROJECT_ROOT / "segment_discovery" / "outputs" / "gap_observations.csv"
+GAP_CALIBRATION_MIN_OBSERVATIONS = 8   # 이보다 적게 쌓였으면 콜드스타트로 보고 고정값(1.3) 사용
+GAP_CALIBRATION_NEIGHBORS = 6          # 표본크기(n)가 가장 비슷한 과거 관측치 k개만 사용
+GAP_CALIBRATION_PERCENTILE = 90        # 그 k개 중 상위 분위수(보수적 상한) 채택
 
 # ---------------------------------------------------------------------------
 # ②·Ⓑ 순열검정 반복횟수 — 순차적 조기 중단 (부트스트랩과는 다른 통계량)
@@ -100,9 +124,27 @@ ANALYSIS_B_BOOTSTRAP_COUNT = 300  # 분석A·서브트랙Q와 동일 - 표본부
 # ---------------------------------------------------------------------------
 # 서브트랙Q — risk_count(메인) + K-means(보조탐색)
 # ---------------------------------------------------------------------------
-SUBTRACK_Q_PERMUTATION_COUNT = 500
-SUBTRACK_Q_BOOTSTRAP_COUNT = 300
+# ⚠️ [정정] 아래 SUBTRACK_Q_PERMUTATION_COUNT(500)·SUBTRACK_Q_BOOTSTRAP_COUNT(300)는
+# 분석A·B와 동일한 자동화 로직이 적용되지 않은 채 남아있던 고정값이었다.
+# risk_count 검증도 분석A/B와 같은 원칙(반복횟수를 사람이 고정하지 않고
+# 데이터가 직접 찾음)을 적용한다:
+#
+# 순열검정: risk_count의 통계량(risk_count별 이탈률의 분산)은 AUC와 다르지만,
+# "관측값을 넘는 순열의 비율"은 통계량 종류와 무관하게 항상 이항분포를
+# 따른다 - 분석A의 Clopper-Pearson 기반 순차적 조기중단(find_stable_
+# permutation_count, analysis_a.permutation_test_for_segment에서 추출한
+# 공통 로직)을 그대로 재사용한다.
+#
+# 부트스트랩: risk_count 최고위험구간의 부트스트랩은 AUC가 아니라 단순
+# "이탈률(비율)"의 신뢰구간이므로, Hanley-McNeil(AUC 전용 공식)을 쓸 수
+# 없다 - 대신 Wilson 표준오차(비율 추정량의 표준 공식, subtrack_q.wilson_se)
+# 를 이론값으로 쓴다. 모델 재학습이 없는 단순 재추출이라 분석A/B의 AUC
+# 기반 부트스트랩(gap비율 1.3 안팎)보다 이론값에 더 가깝게 수렴하는 것이
+# 실측으로 확인됨 - SUBTRACK_Q_STRUCTURAL_GAP을 별도로 더 타이트하게 둔다.
+SUBTRACK_Q_PERMUTATION_COUNT = 500  # ⚠️ 더 이상 쓰이지 않음(레거시 호환용) - permutation_test_for_risk_count가 순차적 조기중단으로 교체됨
+SUBTRACK_Q_BOOTSTRAP_COUNT = 300    # ⚠️ 더 이상 쓰이지 않음(레거시 호환용) - bootstrap_top_risk_group_ci가 순차적 조기중단으로 교체됨
 SUBTRACK_Q_KMEANS_CLUSTERS = 6
+SUBTRACK_Q_STRUCTURAL_GAP = 1.1   # [콜드스타트 폴백] 모델재학습이 없는 단순 재추출이라 AUC기반(1.3)보다 타이트 - 실측 gap비율 1.02 근방 확인됨
 
 # ---------------------------------------------------------------------------
 # 예측모델 — 1·2·3단계 + 보조 MLP
