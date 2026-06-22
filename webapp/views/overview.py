@@ -50,18 +50,103 @@ def _prob_hist(dff) -> alt.Chart:
     ).properties(height=230).configure_view(strokeWidth=0)
 
 
-def _tenure_line(dff, mean_rate, boundaries) -> alt.Chart:
-    curve = D.tenure_churn_curve(dff)
-    tmax, ticks = D.tenure_axis(curve)
-    bnd = alt.Chart(pd.DataFrame({"x": list(boundaries)})).mark_rule(
-        color="#c2cbe0").encode(x="x:Q")
-    line = alt.Chart(curve).mark_line(color=CORAL, strokeWidth=2.5).encode(
-        x=alt.X("tenure:Q", title="경과월(tenure)", scale=alt.Scale(domain=[0, tmax]),
-                axis=alt.Axis(values=ticks, grid=False)),
-        y=alt.Y("rate:Q", title="이탈률", axis=alt.Axis(format="%", grid=False)))
+SEG_PAL = ["#cdd9ff", "#c9efe1", "#ffe2bf", "#e4dcfb"]  # 세그먼트 1~4 구분용 라이트 톤
+
+
+def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt.Chart:
+    full = D.tenure_churn_curve(df_full)
+    tmax, _ = D.tenure_axis(full)
+    edges = [0] + list(boundaries) + [tmax]
+    yaxis = alt.Axis(format="%", grid=False)
+
+    # 세그먼트별 정수 시작·끝 (세그먼트1: 0~10, 2: 11~22, 3: 23~54, 4: 55~72)
+    def _intrange(i):
+        lo = 0 if i == 0 else int(boundaries[i - 1] + 0.5)
+        hi = int(boundaries[i] - 0.5) if i < len(boundaries) else int(tmax)
+        return lo, hi
+    seg_ranges = [_intrange(i) for i in range(len(seg_names))]
+
+    if seg_sel == "전체":
+        curve = full
+        x_domain = [0, tmax]
+        xticks = sorted({v for r in seg_ranges for v in r})   # 0,10,11,22,23,54,55,72
+        ymax = float(full["rate"].max()) * 1.12
+        bands = alt.Chart(pd.DataFrame([
+            {"x0": edges[i], "x1": edges[i + 1], "y0": 0.0, "y1": ymax, "seg": seg_names[i]}
+            for i in range(len(seg_names))])).mark_rect(opacity=0.5).encode(
+            x=alt.X("x0:Q", scale=alt.Scale(domain=x_domain), title="경과월(tenure)"),
+            x2="x1:Q",
+            y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), y2="y1:Q",
+            color=alt.Color("seg:N", scale=alt.Scale(domain=seg_names, range=SEG_PAL),
+                            legend=None))
+        labels = alt.Chart(pd.DataFrame([
+            {"x": (edges[i] + edges[i + 1]) / 2, "y": ymax * 0.93, "t": seg_names[i]}
+            for i in range(len(seg_names))])).mark_text(
+            fontWeight="bold", fontSize=11, color="#4b5566").encode(
+            x="x:Q", y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), text="t:N")
+        extra, pt = [bands, labels], False
+    else:
+        sidx = seg_names.index(seg_sel)
+        curve = D.tenure_churn_curve(dff)
+        lo, hi = seg_ranges[sidx]
+        x_domain = [lo, hi]
+        xticks = [lo, hi]
+        ymax = (float(curve["rate"].max()) * 1.15) if len(curve) else 1.0
+        band = alt.Chart(pd.DataFrame([{"x0": lo, "x1": hi, "y0": 0.0, "y1": ymax}])).mark_rect(
+            opacity=0.5, color=SEG_PAL[sidx]).encode(
+            x=alt.X("x0:Q", scale=alt.Scale(domain=x_domain), title="경과월(tenure)"),
+            x2="x1:Q",
+            y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), y2="y1:Q")
+        label = alt.Chart(pd.DataFrame([
+            {"x": (lo + hi) / 2, "y": ymax * 0.93, "t": seg_names[sidx]}])).mark_text(
+            fontWeight="bold", fontSize=11, color="#4b5566").encode(
+            x="x:Q", y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), text="t:N")
+        extra, pt = [band, label], True
+
+    line = alt.Chart(curve).mark_line(color=CORAL, strokeWidth=2.5, point=pt).encode(
+        x=alt.X("tenure:Q", title="경과월(tenure)", scale=alt.Scale(domain=x_domain),
+                axis=alt.Axis(values=xticks, grid=False, labelOverlap=False, labelFontSize=10)),
+        y=alt.Y("rate:Q", title="이탈률", scale=alt.Scale(domain=[0, ymax]), axis=yaxis))
     mean_rule = alt.Chart(pd.DataFrame({"y": [mean_rate]})).mark_rule(
-        color=MUTED, strokeDash=[4, 4]).encode(y="y:Q")
-    return (bnd + line + mean_rule).properties(height=250).configure_view(strokeWidth=0)
+        color=MUTED, strokeDash=[4, 4]).encode(
+        y=alt.Y("y:Q", scale=alt.Scale(domain=[0, ymax])))
+    return alt.layer(*extra, line, mean_rule).properties(height=250).configure_view(strokeWidth=0)
+
+
+def _segment_risk_body(df, rules, seg) -> str:
+    """세그먼트 한 칸: ① 위험 요소별 이탈률  ② 위험 신호 개수별 이탈률 + 흔한 신호 조합."""
+    seg_df = df[df["segment"] == seg]
+    val = D.segment_validation(rules, seg)
+    top = set(val.get("top_attributes", []))
+
+    # ① 위험 요소별 이탈률 (세그먼트 내 보유자 기준)
+    attr = D.loss_by_risk_attribute(seg_df).sort_values("churn", ascending=False)
+    amax = (float(attr["churn"].max()) * 100) or 1.0
+    abars = ""
+    for _, r in attr.iterrows():
+        star = ' <span class="tag sig" style="margin:0">핵심</span>' if r["attr"] in top else ""
+        abars += T.hbar(f'{r["label"]}{star}', r["churn"] * 100, f'{r["churn"]*100:.0f}%',
+                        meta=f'보유 {int(r["n"]):,}명', maxpct=amax)
+    card_a = T.card(T.card_title(
+        "위험 요소별 이탈률",
+        "이 세그먼트에서 해당 요소를 가진 고객의 이탈률 · ‘핵심’ = 분석 B 검증 요소") + abars)
+
+    # ② 위험 신호 조합 (risk_count, 세그먼트 내)
+    rc = D.risk_count_distribution(seg_df)
+    sig = D.risk_count_signals(seg_df, top=3)
+    cmax = (float(rc["rate"].max()) * 100) or 1.0
+    cbars = ""
+    for _, r in rc.iterrows():
+        k = int(r["risk_count"])
+        chips = "".join(f'<span class="chip">{lbl} {int(round(sh*100))}%</span>'
+                        for lbl, sh in sig.get(k, []))
+        cbars += (T.hbar(f"위험신호 {k}개", r["rate"] * 100, f'{r["rate"]*100:.0f}%',
+                         meta=f'{int(r["count"]):,}명', maxpct=cmax)
+                  + (f'<div style="margin:-.2rem 0 .75rem">{chips}</div>' if chips else ""))
+    card_b = T.card(T.card_title(
+        "위험 신호 조합 · 누적 (서브트랙 Q)",
+        "신호가 쌓일수록 이탈률 상승 · 칩 = 그 그룹에 흔한 신호(어떤 조합이 누적되는지)") + cbars)
+    return card_a + card_b
 
 
 def _sel_rows(event) -> list:
@@ -133,8 +218,19 @@ def render():
         with st.container(border=True):
             T.html('<div class="ch-t">경과월(tenure)별 이탈률 추이 '
                    '<span class="ch-sub">— 달력 월이 아닌 가입 후 경과월 기준</span></div>')
-            st.altair_chart(_tenure_line(dff, s["churn_rate"], boundaries),
-                            use_container_width=True)
+            st.altair_chart(
+                _tenure_line(df, dff, s["churn_rate"], boundaries, seg_sel, seg_names),
+                use_container_width=True)
+
+    # ── 세그먼트별 위험 요소 · 신호 조합 (접기/펼치기) ──
+    with st.expander("🔬 세그먼트별 위험 요소 · 위험 신호 조합 — 펼쳐 보기", expanded=False):
+        T.html('<div class="note" style="margin-bottom:.6rem">각 세그먼트 안에서 '
+               '위험 요소별 이탈률과, 위험 신호가 누적될수록 이탈이 어떻게 커지는지'
+               '(어떤 신호 조합이 쌓이는지)를 봅니다.</div>')
+        seg_tabs = st.tabs([D.SEGMENT_NAMES[i] for i in range(len(seg_names))])
+        for i, tb in enumerate(seg_tabs):
+            with tb:
+                T.html(_segment_risk_body(df, rules, i))
 
     # ── 운영 핵심: 고위험 명단 + 인과 해설 ──
     pri = D.priority_customers(dff, top=LIST_N).reset_index(drop=True)
