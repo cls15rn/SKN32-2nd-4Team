@@ -103,9 +103,22 @@ RISK_LABELS = {
     "InternetService": "광랜(Fiber)",
     "OnlineSecurity": "온라인보안 미가입",
     "TechSupport": "기술지원 미가입",
+    "HighCharge": "높은 월요금(상위 30%)",
 }
 # 핵심 원인 우선순위 (이탈 신호가 강한 순) — 한 고객이 여러 위험속성을 가질 때 무엇을 대표로 보여줄지
 RISK_PRIORITY = ["Contract", "OnlineSecurity", "TechSupport", "PaymentMethod", "InternetService"]
+
+# 위험 신호 누적(risk_count)은 서브트랙 Q가 검증한 위 5종으로 고정.
+# 아래 '표시용' 목록은 위험 요소별 이탈률/손실 표시에 검증된 연속형 드라이버(월요금)를 더한 것.
+# (risk_count 와 분리: risk_count 에 6번째를 넣으면 segment_rules.json 검증과 어긋남)
+HIGH_CHARGE_PCTL = 0.70          # 상위 30% = 70퍼센타일 이상 (인과 해설 패널과 동일 기준)
+RISK_PRIORITY_DISPLAY = RISK_PRIORITY + ["HighCharge"]
+
+
+def _ext_risk_values(rules: dict) -> dict:
+    """5종 위험값 + 파생 'HighCharge' 위험값('High')을 합친 매핑 (표시용 함수에서 사용)."""
+    return {**rules["subtrack_q"]["risk_attribute_values"], "HighCharge": "High"}
+
 
 # 분석B 속성·범주 표시 그룹 (이미지11) — 컬럼: [(범주명, 표시라벨)]
 ANALYSIS_B_GROUPS = {
@@ -124,6 +137,10 @@ ANALYSIS_B_GROUPS = {
     "계약 형태": (
         "Contract",
         {"Month-to-month": "월단위", "One year": "1년", "Two year": "2년"},
+    ),
+    "월요금 수준": (
+        "HighCharge",
+        {"High": "높은 요금 (상위 30%)", "Low": "그 외 요금"},
     ),
 }
 
@@ -204,6 +221,11 @@ def get_scored() -> tuple[pd.DataFrame, dict]:
 
     df["이탈확률"] = proba
     df["예상손실"] = df["MonthlyCharges"] * df["이탈확률"]
+    # 연속형 '높은 월요금'을 표시용 위험 요소로 쓰기 위한 이진 플래그 (전역 70퍼센타일 기준 = 인과 해설과 동일).
+    # risk_count(검증된 5종)에는 넣지 않고, 표시용 RISK_PRIORITY_DISPLAY 에서만 사용.
+    df["HighCharge"] = np.where(
+        df["MonthlyCharges"] >= df["MonthlyCharges"].quantile(HIGH_CHARGE_PCTL),
+        "High", "Low")
     meta = {"source": source, "n": len(df)}
     return df, meta
 
@@ -435,14 +457,14 @@ def loss_by_segment(t: pd.DataFrame) -> pd.DataFrame:
 
 
 def loss_by_risk_attribute(t: pd.DataFrame) -> pd.DataFrame:
-    """위험속성별: 보유 대상 수 / 예상손실 합 / 보유자 이탈률."""
+    """위험속성별: 보유 대상 수 / 예상손실 합 / 보유자 이탈률. (검증 5종 + 높은 월요금)"""
     rules = load_rules()
-    risk_values = rules["subtrack_q"]["risk_attribute_values"]
+    rv = _ext_risk_values(rules)
     rows = []
-    for col in RISK_PRIORITY:
-        held = t[t[col] == risk_values[col]]
+    for col in RISK_PRIORITY_DISPLAY:
+        held = t[t[col] == rv[col]]
         rows.append({
-            "attr": col,
+            "attr": "MonthlyCharges" if col == "HighCharge" else col,
             "label": RISK_LABELS[col],
             "n": len(held),
             "loss": held["예상손실"].sum(),
@@ -450,6 +472,32 @@ def loss_by_risk_attribute(t: pd.DataFrame) -> pd.DataFrame:
         })
     res = pd.DataFrame(rows).sort_values("loss", ascending=False).reset_index(drop=True)
     return res
+
+
+def risk_attribute_by_segment(df: pd.DataFrame) -> list:
+    """유형(위험속성)별 × 세그먼트별 보유자 이탈률.
+    같은 위험 유형이라도 생애주기(세그먼트)에 따라 이탈률이 어떻게 달라지는지 본다.
+    반환: [{attr, label, overall_n, overall_churn, segs:[{seg,n,churn|None}]}], 전체 이탈률 내림차순."""
+    rules = load_rules()
+    rv = _ext_risk_values(rules)
+    n_seg = len(SEGMENT_NAMES)
+    out = []
+    for col in RISK_PRIORITY_DISPLAY:
+        held = df[df[col] == rv[col]]
+        segs = []
+        for s in range(n_seg):
+            h = held[held["segment"] == s]
+            segs.append({"seg": s, "n": len(h),
+                         "churn": (float(h["churn"].mean()) if len(h) else None)})
+        out.append({
+            "attr": "MonthlyCharges" if col == "HighCharge" else col,
+            "label": RISK_LABELS[col],
+            "overall_n": len(held),
+            "overall_churn": float(held["churn"].mean()) if len(held) else 0.0,
+            "segs": segs,
+        })
+    out.sort(key=lambda r: r["overall_churn"], reverse=True)
+    return out
 
 
 def loss_by_risk_signal(t: pd.DataFrame) -> pd.DataFrame:
