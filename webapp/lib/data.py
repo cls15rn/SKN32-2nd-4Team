@@ -599,3 +599,41 @@ def get_whatif_model():
     clf = _fallback_classifier()
     clf.fit(X, y)
     return clf, feat3
+
+
+# ===========================================================================
+# ROI 시뮬레이션용 집계 함수
+# ===========================================================================
+
+def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    세그먼트별 ROI 시뮬레이션 기초 통계.
+
+    반환 컬럼:
+      segment, name, range,
+      n_total       전체 고객 수
+      n_high        이탈확률 50%+ 고객 수
+      avg_mc        평균 MonthlyCharges
+      avg_tenure    평균 tenure
+      remaining     잔존기간 추정 (max_tenure - avg_tenure, 기획구현.md 9번)
+      avg_prob      평균 이탈확률
+      total_loss    예상 월손실 합계
+    """
+    max_tenure = float(df["tenure"].max())
+    rows = []
+    for seg in sorted(df["segment"].unique()):
+        sub = df[df["segment"] == seg]
+        hi  = sub[sub["이탈확률"] >= TARGET_PROB]
+        rows.append({
+            "segment":    int(seg),
+            "name":       SEGMENT_NAMES.get(int(seg), f"세그먼트 {seg+1}"),
+            "range":      SEGMENT_RANGES.get(int(seg), ""),
+            "n_total":    len(sub),
+            "n_high":     len(hi),
+            "avg_mc":     float(sub["MonthlyCharges"].mean()),
+            "avg_tenure": float(sub["tenure"].mean()),
+            "remaining":  float(max_tenure - sub["tenure"].mean()),
+            "avg_prob":   float(sub["이탈확률"].mean()),
+            "total_loss": float(sub["예상손실"].sum()),
+        })
+    return pd.DataFrame(rows)
