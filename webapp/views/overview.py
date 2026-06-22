@@ -21,13 +21,13 @@ LIST_N = 30
 def _donut(stats) -> alt.Chart:
     d = pd.DataFrame({"label": ["이탈", "유지"],
                       "value": [stats["churned"], stats["retained"]]})
-    arc = alt.Chart(d).mark_arc(innerRadius=58, outerRadius=88).encode(
+    arc = alt.Chart(d).mark_arc(innerRadius=42, outerRadius=64).encode(
         theta=alt.Theta("value:Q", stack=True),
         color=alt.Color("label:N",
                         scale=alt.Scale(domain=["이탈", "유지"], range=[CORAL, BLUE]),
                         legend=alt.Legend(orient="bottom", title=None)))
     txt = alt.Chart(pd.DataFrame({"t": [f"{stats['churn_rate']*100:.1f}%"]})).mark_text(
-        fontSize=24, fontWeight="bold", color=CORAL).encode(text="t:N")
+        fontSize=21, fontWeight="bold", color=CORAL).encode(text="t:N")
     return (arc + txt).properties(height=230).configure_view(strokeWidth=0)
 
 
@@ -74,7 +74,7 @@ def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt
         bands = alt.Chart(pd.DataFrame([
             {"x0": edges[i], "x1": edges[i + 1], "y0": 0.0, "y1": ymax, "seg": seg_names[i]}
             for i in range(len(seg_names))])).mark_rect(opacity=0.5).encode(
-            x=alt.X("x0:Q", scale=alt.Scale(domain=x_domain), title="경과월(tenure)"),
+            x=alt.X("x0:Q", scale=alt.Scale(domain=x_domain, nice=False), title="경과월(tenure)"),
             x2="x1:Q",
             y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), y2="y1:Q",
             color=alt.Color("seg:N", scale=alt.Scale(domain=seg_names, range=SEG_PAL),
@@ -94,7 +94,7 @@ def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt
         ymax = (float(curve["rate"].max()) * 1.15) if len(curve) else 1.0
         band = alt.Chart(pd.DataFrame([{"x0": lo, "x1": hi, "y0": 0.0, "y1": ymax}])).mark_rect(
             opacity=0.5, color=SEG_PAL[sidx]).encode(
-            x=alt.X("x0:Q", scale=alt.Scale(domain=x_domain), title="경과월(tenure)"),
+            x=alt.X("x0:Q", scale=alt.Scale(domain=x_domain, nice=False), title="경과월(tenure)"),
             x2="x1:Q",
             y=alt.Y("y0:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), y2="y1:Q")
         label = alt.Chart(pd.DataFrame([
@@ -104,7 +104,7 @@ def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt
         extra, pt = [band, label], True
 
     line = alt.Chart(curve).mark_line(color=CORAL, strokeWidth=2.5, point=pt).encode(
-        x=alt.X("tenure:Q", title="경과월(tenure)", scale=alt.Scale(domain=x_domain),
+        x=alt.X("tenure:Q", title="경과월(tenure)", scale=alt.Scale(domain=x_domain, nice=False),
                 axis=alt.Axis(values=xticks, grid=False, labelOverlap=False, labelFontSize=10)),
         y=alt.Y("rate:Q", title="이탈률", scale=alt.Scale(domain=[0, ymax]), axis=yaxis))
     mean_rule = alt.Chart(pd.DataFrame({"y": [mean_rate]})).mark_rule(

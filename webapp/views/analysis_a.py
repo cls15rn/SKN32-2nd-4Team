@@ -38,7 +38,7 @@ def _chart(curve, mean_rate, boundaries, prof):
     labels = _segment_labels(prof, boundaries, tmax)
     base = alt.Chart(curve).encode(
         x=alt.X("tenure:Q", title="경과월(tenure)",
-                scale=alt.Scale(domain=[0, tmax]),
+                scale=alt.Scale(domain=[0, tmax], nice=False),
                 axis=alt.Axis(values=ticks, grid=False)))
     line = base.mark_line(color=T.MAROON, strokeWidth=2.2).encode(
         y=alt.Y("rate:Q", title="이탈률", axis=alt.Axis(format="%", grid=False),
