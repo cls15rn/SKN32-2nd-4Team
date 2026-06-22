@@ -171,17 +171,7 @@ def load_frame() -> pd.DataFrame:
     df = pd.read_csv(DATA_PATH)
     df = clean_raw_data(df)
 
-    boundaries = rules["analysis_a"]["boundaries"]
-    upper = max(df["tenure"].max(), boundaries[-1]) + 1
-    bins = [-1] + list(boundaries) + [upper]
-    df["segment"] = pd.cut(df["tenure"], bins=bins, labels=range(len(bins) - 1)).astype(int)
-    df["segment_name"] = df["segment"].map(SEGMENT_NAMES)
-
-    risk_values = rules["subtrack_q"]["risk_attribute_values"]
-    masks = pd.DataFrame(index=df.index)
-    for col, risky in risk_values.items():
-        masks[col] = (df[col] == risky).astype(int)
-    df["risk_count"] = masks.sum(axis=1)
+    df = _assign_segment_and_risk(df, rules)
 
     df["churn"] = (df["Churn"] == "Yes").astype(int)
     return df
@@ -190,6 +180,26 @@ def load_frame() -> pd.DataFrame:
 # ===========================================================================
 # 이탈확률 — 학습된 모델 우선, 없으면 자체 캐시 모델
 # ===========================================================================
+def _assign_segment_and_risk(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
+    """세그먼트 할당 + risk_count 계산 — get_scored / score_uploaded_csv 공통 로직.
+
+    df는 clean_raw_data()를 거친 상태여야 한다.
+    """
+    boundaries = rules["analysis_a"]["boundaries"]
+    upper = max(df["tenure"].max(), boundaries[-1]) + 1
+    bins = [-1] + list(boundaries) + [upper]
+    df["segment"] = pd.cut(df["tenure"], bins=bins,
+                           labels=range(len(bins) - 1)).astype(int)
+    df["segment_name"] = df["segment"].map(SEGMENT_NAMES)
+
+    risk_values = rules["subtrack_q"]["risk_attribute_values"]
+    masks = pd.DataFrame(index=df.index)
+    for col, risky in risk_values.items():
+        masks[col] = (df[col] == risky).astype(int)
+    df["risk_count"] = masks.sum(axis=1)
+    return df
+
+
 def _fallback_classifier():
     """xgboost가 있으면 그걸, 없으면 sklearn HistGradientBoosting을 쓴다(둘 다 트리 계열)."""
     try:
@@ -672,19 +682,7 @@ def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:
 
     # 세그먼트 할당
     rules = load_rules()
-    boundaries = rules["analysis_a"]["boundaries"]
-    upper = max(df["tenure"].max(), boundaries[-1]) + 1
-    bins = [-1] + list(boundaries) + [upper]
-    df["segment"] = pd.cut(df["tenure"], bins=bins,
-                           labels=range(len(bins) - 1)).astype(int)
-    df["segment_name"] = df["segment"].map(SEGMENT_NAMES)
-
-    # risk_count
-    risk_values = rules["subtrack_q"]["risk_attribute_values"]
-    masks = pd.DataFrame(index=df.index)
-    for col, risky in risk_values.items():
-        masks[col] = (df[col] == risky).astype(int)
-    df["risk_count"] = masks.sum(axis=1)
+    df = _assign_segment_and_risk(df, rules)
     df["churn"] = (df["Churn"] == "Yes").astype(int)
 
     # 이탈확률 예측

@@ -26,35 +26,6 @@ from lib import theme as T  # noqa: E402
 from lib import data as D  # noqa: E402
 from views import overview, priority, analysis, whatif, roi  # noqa: E402
 
-st.set_page_config(page_title="고객 이탈 예측 시스템",
-                   page_icon="📉", layout="wide")
-T.inject()
-
-# ---- 사이드바: 브랜드 (nav 위) ----
-st.sidebar.markdown(
-    '<div class="sb-brand">👥 고객 이탈 예측 시스템'
-    '<span class="sb-sub">Customer Churn Prediction</span></div>',
-    unsafe_allow_html=True)
-
-# ---- 네비게이션 (그룹형) ----
-PG_OVERVIEW = st.Page(overview.render, title="홈 / 개요", icon="🏠",
-                      url_path="overview", default=True)
-PG_PRIORITY = st.Page(priority.render, title="우선 대응 고객", icon="🎯",
-                      url_path="priority")
-PG_ANALYSIS = st.Page(analysis.render, title="분석", icon="🧭",
-                      url_path="analysis")
-PG_WHATIF = st.Page(whatif.render, title="위험 고객 맞춤 프로모션 시뮬레이터", icon="🔮",
-                    url_path="whatif")
-PG_ROI = st.Page(roi.render, title="이탈 방어 비용 효과 분석", icon="💹",
-                 url_path="roi")
-pages = {
-    "개요": [PG_OVERVIEW],
-    "실행": [PG_PRIORITY],
-    "분석": [PG_ANALYSIS],
-    "시뮬레이션": [PG_WHATIF, PG_ROI],
-}
-# 홈의 진입 카드(st.page_link)가 참조할 수 있도록 Page 객체 노출
-st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS, "whatif": PG_WHATIF, "roi": PG_ROI}
 
 def _sidebar_datasource() -> None:
     """사이드바 데이터소스 전환 UI.
@@ -122,6 +93,37 @@ def _sidebar_datasource() -> None:
             st.session_state.pop("uploaded_df", None)
             st.session_state.pop("uploaded_file_id", None)
             st.session_state["use_uploaded"] = False
+
+
+st.set_page_config(page_title="고객 이탈 예측 시스템",
+                   page_icon="📉", layout="wide")
+T.inject()
+
+# ---- 사이드바: 브랜드 (nav 위) ----
+st.sidebar.markdown(
+    '<div class="sb-brand">👥 고객 이탈 예측 시스템'
+    '<span class="sb-sub">Customer Churn Prediction</span></div>',
+    unsafe_allow_html=True)
+
+# ---- 네비게이션 (그룹형) ----
+PG_OVERVIEW = st.Page(overview.render, title="홈 / 개요", icon="🏠",
+                      url_path="overview", default=True)
+PG_PRIORITY = st.Page(priority.render, title="우선 대응 고객", icon="🎯",
+                      url_path="priority")
+PG_ANALYSIS = st.Page(analysis.render, title="분석", icon="🧭",
+                      url_path="analysis")
+PG_WHATIF = st.Page(whatif.render, title="위험 고객 맞춤 프로모션 시뮬레이터", icon="🔮",
+                    url_path="whatif")
+PG_ROI = st.Page(roi.render, title="이탈 방어 비용 효과 분석", icon="💹",
+                 url_path="roi")
+pages = {
+    "개요": [PG_OVERVIEW],
+    "실행": [PG_PRIORITY],
+    "분석": [PG_ANALYSIS],
+    "시뮬레이션": [PG_WHATIF, PG_ROI],
+}
+# 홈의 진입 카드(st.page_link)가 참조할 수 있도록 Page 객체 노출
+st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS, "whatif": PG_WHATIF, "roi": PG_ROI}
 
 
 nav = st.navigation(pages, position="sidebar")

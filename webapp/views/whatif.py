@@ -101,8 +101,10 @@ EDITABLE_ATTRS = [
     },
 ]
 
-# 범주형 속성만 (슬라이더 제외) — 숫자형(MonthlyCharges 슬라이더)은 EDITABLE_ATTRS 마지막 항목으로 직접 참조
+# 범주형 속성만 (슬라이더 제외)
 CAT_ATTRS = [a for a in EDITABLE_ATTRS if a["options"] is not None]
+# MonthlyCharges 항목 — col 명으로 명시적 조회 (인덱스 의존 방지)
+MC_ATTR = next(a for a in EDITABLE_ATTRS if a["col"] == "MonthlyCharges")
 
 
 # ---------------------------------------------------------------------------
@@ -353,13 +355,12 @@ def render():
             fdf = fdf[fdf["segment"] == seg_idx]
 
     # 이탈 위험 높은 순으로 정렬한 고객 목록
-    fdf_sorted = fdf.sort_values("이탈확률", ascending=False)
-    cid_options = fdf_sorted["customerID"].tolist()
+    fdf_sorted = fdf.sort_values("이탈확률", ascending=False).head(300)
     display_opts = [
-        f"{cid}  —  이탈 {fdf_sorted.loc[fdf_sorted.customerID==cid,'이탈확률'].values[0]*100:.0f}%  "
-        f"| {D.SEGMENT_NAMES[int(fdf_sorted.loc[fdf_sorted.customerID==cid,'segment'].values[0])]} "
-        f"| 위험신호 {int(fdf_sorted.loc[fdf_sorted.customerID==cid,'risk_count'].values[0])}개"
-        for cid in cid_options[:300]
+        f"{r.customerID}  —  이탈 {r.이탈확률*100:.0f}%  "
+        f"| {D.SEGMENT_NAMES[int(r.segment)]} "
+        f"| 위험신호 {int(r.risk_count)}개"
+        for r in fdf_sorted.itertuples(index=False)
     ]
     with col_search:
         selected_display = st.selectbox(
@@ -486,7 +487,7 @@ def render():
                 "label": "월 요금",
                 "before_kr": f"${mc_orig:.0f}",
                 "after_kr": f"${mc_new:.0f}",
-                "effect": EDITABLE_ATTRS[-1]["effect"],
+                "effect": MC_ATTR["effect"],
             })
 
         st.markdown("---")
