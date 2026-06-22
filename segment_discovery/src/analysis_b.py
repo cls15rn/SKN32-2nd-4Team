@@ -216,10 +216,11 @@ def find_stable_bootstrap_count_for_attributes(
     max_iter: int = config.SEQUENTIAL_MAX_ITER,
     check_every: int = config.SEQUENTIAL_CHECK_EVERY,
     min_n_before_check: int = config.SEQUENTIAL_MIN_N_BEFORE_CHECK,
-    structural_gap: float = config.SEQUENTIAL_STRUCTURAL_GAP,
+    structural_gap: float | None = None,
     ceiling_patience: int = config.SEQUENTIAL_CEILING_PATIENCE,
     self_stability_window: int = config.SEQUENTIAL_SELF_STABILITY_WINDOW,
     self_stability_threshold: float = config.SEQUENTIAL_SELF_STABILITY_THRESHOLD,
+    record_observation: bool = True,
 ) -> tuple[int, float, float, float, pd.DataFrame]:
     """
     분석A의 find_stable_bootstrap_count(G안, 순차적 조기중단)와 완전히 같은
@@ -232,6 +233,13 @@ def find_stable_bootstrap_count_for_attributes(
     순차적 조기중단이 "더 많은 반복이 필요하다"고 자동으로 판단해 더 오래
     실행되는 것으로 확인됨 - 표본부족 위험이 큰 곳에 자동으로 더 신중한
     검증이 적용되는 바람직한 결과.
+
+    structural_gap 적응형 보정 (3번 항목, gap_calibration.py 참조)
+    ----------------------------------------------------------------
+    분석A의 find_stable_bootstrap_count와 같은 적응형 보정을 그대로
+    재사용한다 - 같은 gap_observations.csv에 분석A·B의 관측치가 함께
+    누적되므로, 더 빨리 신뢰할 만한 분位수에 도달한다. structural_gap을
+    직접 지정하면(기존 테스트 호환) 적응형 조회를 건너뛴다.
 
     Returns
     -------
@@ -248,6 +256,10 @@ def find_stable_bootstrap_count_for_attributes(
     n_positive = int(y.sum())
     n_negative = n - n_positive
     se_hm = hanley_mcneil_se(point_auc, n_positive, n_negative)
+
+    if structural_gap is None:
+        from gap_calibration import adaptive_structural_gap
+        structural_gap, _gap_source = adaptive_structural_gap(n, statistic_type="auc_hanley_mcneil")
     safe_ceiling = 2 * 1.96 * se_hm * structural_gap
 
     rng = np.random.RandomState(random_state)
@@ -256,6 +268,18 @@ def find_stable_bootstrap_count_for_attributes(
     rows = []
     ceiling_streak = 0
     last_ci_low, last_ci_high = float("nan"), float("nan")
+
+    def _finish(stop_n: int) -> tuple[int, float, float, float, pd.DataFrame]:
+        diagnostics = pd.DataFrame(rows)
+        mean_auc = float(np.mean(boot_aucs))
+        ci_low, ci_high = float(last_ci_low), float(last_ci_high)
+        if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
+            from gap_calibration import record_auc_gap_observation
+            record_auc_gap_observation(
+                n=n, point_auc=point_auc, n_positive=n_positive,
+                n_negative=n_negative, ci_width=ci_high - ci_low,
+            )
+        return stop_n, mean_auc, ci_low, ci_high, diagnostics
 
     for i in range(1, max_iter + 1):
         boot_idx = rng.choice(n, n, replace=True)
@@ -294,11 +318,9 @@ def find_stable_bootstrap_count_for_attributes(
                 )
 
             if ceiling_streak >= ceiling_patience or self_stable:
-                diagnostics = pd.DataFrame(rows)
-                return i, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+                return _finish(i)
 
-    diagnostics = pd.DataFrame(rows)
-    return max_iter, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+    return _finish(max_iter)
 
 
 # ---------------------------------------------------------------------------

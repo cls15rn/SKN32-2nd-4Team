@@ -71,9 +71,10 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
     }
     result_q = run_subtrack_q(df_train, risk_attribute_values)
     print(f"      risk_count단독 AUC: {result_q['risk_count_only_auc']:.4f}, "
-          f"p={result_q['p_value']:.4f}")
+          f"p={result_q['p_value']:.4f} (n_permutations_used={result_q['n_permutations_used']})")
     print(f"      최고위험(risk_count={result_q['top_risk_count_value']}) "
-          f"신뢰구간=[{result_q['ci_low']:.4f}, {result_q['ci_high']:.4f}]")
+          f"신뢰구간=[{result_q['ci_low']:.4f}, {result_q['ci_high']:.4f}] "
+          f"(n_bootstrap_used={result_q['n_bootstrap_used']})")
 
     rules = {
         "analysis_a": {
@@ -93,9 +94,11 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
             "risk_attribute_values": risk_attribute_values,
             "risk_count_only_auc": result_q["risk_count_only_auc"],
             "p_value": result_q["p_value"],
+            "n_permutations_used": result_q["n_permutations_used"],
             "top_risk_count_value": result_q["top_risk_count_value"],
             "ci_low": result_q["ci_low"],
             "ci_high": result_q["ci_high"],
+            "n_bootstrap_used": result_q["n_bootstrap_used"],
         },
     }
 

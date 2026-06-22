@@ -49,7 +49,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "segment_discovery" / "src
 from evaluate import (  # noqa: E402
     check_segment_label_incremental_contribution,
     compare_stage_metrics,
+    compute_shap_importance,
+    compute_xgboost_feature_importance,
+    compute_xgboost_root_node_distribution,
     estimate_fn_cost,
+    summarize_segment_feature_ranking,
 )
 from feature_engineering import load_segment_rules, prepare_model_inputs  # noqa: E402
 from preprocessing import run_preprocessing  # noqa: E402
@@ -111,6 +115,35 @@ def main(csv_path: str, rules_path: str):
           f"AUC {contribution['auc_increment']:+.4f}")
     print(f"      ※ {contribution['note']}")
 
+    # ⚠️ [실측 확인] "segment_*가 통계적으로 검증된 랜드마크 피처라 모델의
+    # 최상위 분기 기준으로 선택될 것"이라는 가설을 feature importance(gain)·
+    # SHAP·실제 트리 루트노드 분포 세 가지 독립적인 방법으로 직접 검증한다.
+    # 결과가 일치하면(=segment 영향력이 낮다는 결론이 재현되면), 이는 측정
+    # 방식에 따른 우연이 아니라는 교차검증이 된다 - 위 contribution(F1/AUC
+    # 증분)과 같은 결론을 다른 각도에서 다시 확인하는 단계.
+    print("\n      [세그먼트 피처 영향력 교차검증 — gain / SHAP / 트리 루트노드]")
+    stage3_model = stage_results["stage3"].model
+    gain_importance_full = compute_xgboost_feature_importance(
+        stage3_model, top_n=len(stage3_model.feature_names_in_)
+    )
+    shap_importance_full = compute_shap_importance(
+        stage3_model, inputs["X_test_tree_3"], top_n=len(stage3_model.feature_names_in_)
+    )
+    segment_ranking = summarize_segment_feature_ranking(
+        gain_importance_full, shap_importance_full, list(stage3_model.feature_names_in_),
+    )
+    print(segment_ranking.to_string(index=False))
+
+    root_node_dist = compute_xgboost_root_node_distribution(stage3_model)
+    segment_root_count = sum(
+        count for feat, count in root_node_dist.items() if feat.startswith("segment_")
+    )
+    print(f"      전체 {root_node_dist.sum()}개 트리 중 segment_*가 루트 노드로 "
+          f"선택된 횟수: {segment_root_count}개")
+    print("      ※ 영향력이 낮게 나와도 \"segment가 무의미하다\"는 뜻이 아님 - "
+          "분석A(세그먼트단독AUC+순열검정)가 메인 증거, 위 결과는 예측모델 "
+          "차원의 보조적 실용성 지표일 뿐")
+
     # ⚠️ [수정] 예전에는 여기서 find_recall_drop_threshold를 또 호출해서
     # 메타데이터에만 기록하고, compare_stage_metrics는 별개로 항상 0.5를 썼다.
     # 이제 compare_stage_metrics가 이미 메인 모델(3단계)의 권장 임계값으로
@@ -123,6 +156,10 @@ def main(csv_path: str, rules_path: str):
 
     print(f"\n[5/6] 버전 저장: outputs/versions/{run_timestamp}/")
     version_dir.mkdir(parents=True, exist_ok=True)
+
+    # 세그먼트 피처 영향력 교차검증 결과를 버전 디렉토리에 함께 저장
+    # (보고서/슬라이드 작성 시 재계산 없이 바로 인용 가능하도록)
+    segment_ranking.to_csv(version_dir / "segment_feature_ranking.csv", index=False)
 
     # 메인 모델(3단계) + 변환규칙(FeatureTransformer) 저장
     # ⚠️ FeatureTransformer가 없으면 predict.py가 학습 때와 다른 방식으로
