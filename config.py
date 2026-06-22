@@ -141,8 +141,13 @@ ANALYSIS_B_BOOTSTRAP_COUNT = 300  # 분석A·서브트랙Q와 동일 - 표본부
 # 를 이론값으로 쓴다. 모델 재학습이 없는 단순 재추출이라 분석A/B의 AUC
 # 기반 부트스트랩(gap비율 1.3 안팎)보다 이론값에 더 가깝게 수렴하는 것이
 # 실측으로 확인됨 - SUBTRACK_Q_STRUCTURAL_GAP을 별도로 더 타이트하게 둔다.
-SUBTRACK_Q_PERMUTATION_COUNT = 500  # ⚠️ 더 이상 쓰이지 않음(레거시 호환용) - permutation_test_for_risk_count가 순차적 조기중단으로 교체됨
 SUBTRACK_Q_BOOTSTRAP_COUNT = 300    # ⚠️ 더 이상 쓰이지 않음(레거시 호환용) - bootstrap_top_risk_group_ci가 순차적 조기중단으로 교체됨
+# ⚠️ 예전 SUBTRACK_Q_PERMUTATION_COUNT(500)는 완전히 제거됨(ANALYSIS_A/B_
+# PERMUTATION_COUNT와 동일 패턴) - permutation_test_for_risk_count가
+# n_permutations 파라미터 자체를 받지 않고 SEQUENTIAL_PERMUTATION_MAX_ITER
+# 기반 순차적 조기중단만 쓰므로, "레거시 호환용으로 남겨둘 대상"조차 없음
+# (대조: SUBTRACK_Q_BOOTSTRAP_COUNT는 레거시 함수 bootstrap_top_risk_group_ci
+# 가 실제로 참조하므로 남겨둠 - 둘을 같은 패턴으로 다루면 안 됨을 점검 중 확인)
 SUBTRACK_Q_KMEANS_CLUSTERS = 6
 SUBTRACK_Q_STRUCTURAL_GAP = 1.1   # [콜드스타트 폴백] 모델재학습이 없는 단순 재추출이라 AUC기반(1.3)보다 타이트 - 실측 gap비율 1.02 근방 확인됨
 
@@ -181,14 +186,9 @@ THRESHOLD_SEARCH_WINDOW = 20
 DEFAULT_CLASSIFICATION_THRESHOLD = 0.5
 
 # ---------------------------------------------------------------------------
-# 개발/검증 시 빠르게 돌려보고 싶을 때 (기본값 대신 이 묶음을 넘기면 됨)
-# 결과의 '정확도'는 떨어지지만 '구조 검증'에는 충분 - 실제 제출/운영 시에는
-# 위 기본값(ANALYSIS_A_BOOTSTRAP_COUNT=300 등)을 사용할 것. 순열검정/부트스트랩의
-# 반복횟수는 이제 순차적 조기중단으로 자동화되어 이 오버라이드가 더 이상 필요 없음.
+# [제거됨] 개발/검증 시 빠르게 돌려보고 싶을 때 쓰던 FAST_DEV_OVERRIDES
 # ---------------------------------------------------------------------------
-FAST_DEV_OVERRIDES = {
-    "ANALYSIS_A_BOOTSTRAP_COUNT": 20,
-    "ANALYSIS_B_BOOTSTRAP_COUNT": 20,
-    "SUBTRACK_Q_PERMUTATION_COUNT": 30,
-    "SUBTRACK_Q_BOOTSTRAP_COUNT": 30,
-}
+# 순열검정/부트스트랩의 반복횟수가 순차적 조기중단(Sequential Early Stopping)
+# 으로 자동화되면서 이 오버라이드 자체가 불필요해졌다. 이 딕셔너리를 실제로
+# 적용하는 코드도 작성된 적이 없었음(어디서도 import/참조되지 않는 죽은
+# 코드였음을 점검 중 확인) - 코드 정규화 차원에서 제거.

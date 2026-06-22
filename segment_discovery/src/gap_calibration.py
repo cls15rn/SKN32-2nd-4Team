@@ -49,6 +49,8 @@ import pandas as pd
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import config  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+from stats_formulas import hanley_mcneil_se, wilson_se  # noqa: E402  (analysis_a/subtrack_q 의존 제거 - 12일차 보강)
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +110,6 @@ def record_auc_gap_observation(
     path: Path | None = None,
 ) -> float:
     """분석A/B(AUC 부트스트랩, Hanley-McNeil)용 편의 래퍼"""
-    from analysis_a import hanley_mcneil_se  # 지연 import (순환참조 방지)
-
     se_hm = hanley_mcneil_se(point_auc, n_positive, n_negative)
     theory_width = 2 * 1.96 * se_hm
     return record_gap_observation(
@@ -123,8 +123,6 @@ def record_proportion_gap_observation(
     path: Path | None = None,
 ) -> float:
     """서브트랙Q(비율 부트스트랩, Wilson)용 편의 래퍼"""
-    from subtrack_q import wilson_se  # 지연 import (순환참조 방지)
-
     se_w = wilson_se(point_proportion, n)
     theory_width = 2 * 1.96 * se_w
     return record_gap_observation(
@@ -202,3 +200,95 @@ def adaptive_structural_gap(
     nearest = obs.nsmallest(n_neighbors, "n_distance")
     gap = float(np.percentile(nearest["observed_gap"], percentile))
     return gap, "observed"
+
+
+# ---------------------------------------------------------------------------
+# 부트스트랩 순차적 조기중단 — 멈춤 판단 공통 로직 (코드 점검 중 발견, 12일차 보강)
+# ---------------------------------------------------------------------------
+# ⚠️ 발견된 문제: analysis_a.find_stable_bootstrap_count,
+# analysis_b.find_stable_bootstrap_count_for_attributes,
+# subtrack_q.find_stable_bootstrap_count_for_risk_group 세 함수가 "매
+# check_every회마다 CI폭을 계산하고, 안전 상한(ceiling_streak)·자기 안정성
+# (self_stable) 두 조건을 확인해 멈출지 판단하는" 로직을 글자 그대로
+# 복붙해서 갖고 있었다 - 순열검정 쪽은 find_stable_permutation_p_value로
+# 이미 공통화했는데 부트스트랩 쪽은 누락된 비일관성이었음(분석A/B의 실제
+# diff 결과: model 학습 줄의 max_depth 파라미터 하나만 다르고 나머지
+# 멈춤판단 로직은 완전히 동일). 한쪽만 고치고 다른 쪽을 놓치는 위험이
+# 실제로 존재했던 지점 - 여기로 추출해 세 호출부가 공유하게 한다.
+#
+# 설계: 호출 측은 "한 번의 재추출에서 측정값(AUC 또는 비율) 하나를 만드는
+# 방법"(measurement_fn)만 제공한다. 그 측정값을 누적하고, 멈출지 판단하는
+# 절차 자체는 이 함수가 전담한다 - 모델을 재학습하는지(분석A/B) 단순
+# 재추출만 하는지(서브트랙Q)는 measurement_fn 내부의 문제이므로 이 함수는
+# 그 차이를 몰라도 된다.
+
+def run_sequential_bootstrap(
+    measurement_fn,
+    safe_ceiling: float,
+    max_iter: int,
+    check_every: int,
+    min_n_before_check: int,
+    ceiling_patience: int,
+    self_stability_window: int,
+    self_stability_threshold: float,
+) -> tuple[int, list[float], float, float, list[dict]]:
+    """
+    부트스트랩을 1회씩 누적하면서, 매 check_every회마다 안전 상한 비교와
+    자기 안정성 확인으로 멈출지 판단하는 공통 루프.
+
+    Parameters
+    ----------
+    measurement_fn : () -> float | None
+        한 번의 재추출에서 측정값 하나를 만들어 반환. 표본 부족 등으로
+        이번 반복을 건너뛰어야 하면 None을 반환(예: OOB 표본이 너무 적거나
+        클래스가 한쪽만 있는 경우) - 호출 횟수(i)는 그래도 소비되지만
+        measurements 리스트에는 쌓이지 않는다(기존 analysis_a/b의
+        `continue` 동작과 동일).
+
+    Returns
+    -------
+    stop_n : 멈춘 시점의 누적 반복 횟수
+    measurements : 누적된 유효 측정값 리스트
+    last_ci_low, last_ci_high : 마지막으로 계산된 95% 신뢰구간
+    diagnostics_rows : 체크포인트별 (n, ci_width) 기록 (보고서/로그용)
+    """
+    measurements: list[float] = []
+    width_history: list[float] = []
+    rows: list[dict] = []
+    ceiling_streak = 0
+    last_ci_low, last_ci_high = float("nan"), float("nan")
+
+    for i in range(1, max_iter + 1):
+        value = measurement_fn()
+        if value is None:
+            continue
+        measurements.append(value)
+
+        if i % check_every == 0 and len(measurements) >= min_n_before_check:
+            last_ci_low, last_ci_high = np.percentile(measurements, [2.5, 97.5])
+            width = last_ci_high - last_ci_low
+            width_history.append(width)
+            rows.append({"n": i, "ci_width": width})
+
+            # 조건 ①: 안전 상한보다 좁은가
+            if width <= safe_ceiling:
+                ceiling_streak += 1
+            else:
+                ceiling_streak = 0
+
+            # 조건 ②: 최근 변화가 충분히 작은가 (자기 안정성, 상한 도달 못해도 안전망)
+            self_stable = False
+            if len(width_history) >= self_stability_window + 1:
+                recent = width_history[-(self_stability_window + 1):]
+                rel_changes = [
+                    abs(recent[j + 1] - recent[j]) / recent[j]
+                    for j in range(len(recent) - 1) if recent[j] > 0
+                ]
+                self_stable = bool(rel_changes) and all(
+                    rc < self_stability_threshold for rc in rel_changes
+                )
+
+            if ceiling_streak >= ceiling_patience or self_stable:
+                return i, measurements, float(last_ci_low), float(last_ci_high), rows
+
+    return max_iter, measurements, float(last_ci_low), float(last_ci_high), rows

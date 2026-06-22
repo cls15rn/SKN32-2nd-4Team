@@ -25,6 +25,7 @@ from sklearn.tree import DecisionTreeClassifier
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
 from columns import ANALYSIS_B_NUMERIC_COLS, CATEGORICAL_COLS  # noqa: E402
+from stats_formulas import hanley_mcneil_se  # noqa: E402  (analysis_a 의존 제거 - 12일차 보강)
 
 # ⚠️ 컬럼 목록을 여기서 다시 정의하지 말 것 - shared/columns.py 가 단일 출처.
 # 이 NUMERIC_COLS는 churn_prediction의 스케일링 대상(SCALING_NUMERIC_COLS)과
@@ -245,8 +246,6 @@ def find_stable_bootstrap_count_for_attributes(
     -------
     stop_n, mean_auc, ci_low, ci_high, diagnostics : find_stable_bootstrap_count와 동일한 의미
     """
-    from analysis_a import hanley_mcneil_se  # noqa: E402  (지연 import - 순환참조 방지)
-
     df_enc = _encode_categoricals(df_segment)
     X = df_enc[list(attributes)].values
     y = df_enc["ChurnFlag"].values
@@ -263,64 +262,46 @@ def find_stable_bootstrap_count_for_attributes(
     safe_ceiling = 2 * 1.96 * se_hm * structural_gap
 
     rng = np.random.RandomState(random_state)
-    boot_aucs: list[float] = []
-    width_history: list[float] = []
-    rows = []
-    ceiling_streak = 0
-    last_ci_low, last_ci_high = float("nan"), float("nan")
 
-    def _finish(stop_n: int) -> tuple[int, float, float, float, pd.DataFrame]:
-        diagnostics = pd.DataFrame(rows)
-        mean_auc = float(np.mean(boot_aucs))
-        ci_low, ci_high = float(last_ci_low), float(last_ci_high)
-        if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
-            from gap_calibration import record_auc_gap_observation
-            record_auc_gap_observation(
-                n=n, point_auc=point_auc, n_positive=n_positive,
-                n_negative=n_negative, ci_width=ci_high - ci_low,
-            )
-        return stop_n, mean_auc, ci_low, ci_high, diagnostics
-
-    for i in range(1, max_iter + 1):
+    def _measure_once() -> float | None:
         boot_idx = rng.choice(n, n, replace=True)
         oob_mask = np.ones(n, dtype=bool)
         oob_mask[np.unique(boot_idx)] = False
         oob_idx = np.where(oob_mask)[0]
 
         if len(oob_idx) < 10 or len(np.unique(y[oob_idx])) < 2 or len(np.unique(y[boot_idx])) < 2:
-            continue
+            return None
 
+        # ⚠️ max_depth=4: 분석A(find_stable_bootstrap_count, 단일 변수 segment)
+        # 와의 유일한 실질적 차이 - 분석B는 여러 속성(attributes)을 동시에
+        # 넣으므로 과적합 방지를 위해 트리 깊이를 제한한다. 멈춤 판단 로직
+        # 자체는 gap_calibration.run_sequential_bootstrap으로 공통화됨.
         model = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=random_state)
         model.fit(X[boot_idx], y[boot_idx])
         proba = model.predict_proba(X[oob_idx])[:, 1]
-        boot_aucs.append(roc_auc_score(y[oob_idx], proba))
+        return roc_auc_score(y[oob_idx], proba)
 
-        if i % check_every == 0 and len(boot_aucs) >= min_n_before_check:
-            last_ci_low, last_ci_high = np.percentile(boot_aucs, [2.5, 97.5])
-            width = last_ci_high - last_ci_low
-            width_history.append(width)
-            rows.append({"n": i, "ci_width": width})
+    from gap_calibration import run_sequential_bootstrap
+    stop_n, boot_aucs, ci_low, ci_high, rows = run_sequential_bootstrap(
+        measurement_fn=_measure_once,
+        safe_ceiling=safe_ceiling,
+        max_iter=max_iter,
+        check_every=check_every,
+        min_n_before_check=min_n_before_check,
+        ceiling_patience=ceiling_patience,
+        self_stability_window=self_stability_window,
+        self_stability_threshold=self_stability_threshold,
+    )
 
-            if width <= safe_ceiling:
-                ceiling_streak += 1
-            else:
-                ceiling_streak = 0
-
-            self_stable = False
-            if len(width_history) >= self_stability_window + 1:
-                recent = width_history[-(self_stability_window + 1):]
-                rel_changes = [
-                    abs(recent[j + 1] - recent[j]) / recent[j]
-                    for j in range(len(recent) - 1) if recent[j] > 0
-                ]
-                self_stable = bool(rel_changes) and all(
-                    rc < self_stability_threshold for rc in rel_changes
-                )
-
-            if ceiling_streak >= ceiling_patience or self_stable:
-                return _finish(i)
-
-    return _finish(max_iter)
+    diagnostics = pd.DataFrame(rows)
+    mean_auc = float(np.mean(boot_aucs))
+    if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
+        from gap_calibration import record_auc_gap_observation
+        record_auc_gap_observation(
+            n=n, point_auc=point_auc, n_positive=n_positive,
+            n_negative=n_negative, ci_width=ci_high - ci_low,
+        )
+    return stop_n, mean_auc, ci_low, ci_high, diagnostics
 
 
 # ---------------------------------------------------------------------------

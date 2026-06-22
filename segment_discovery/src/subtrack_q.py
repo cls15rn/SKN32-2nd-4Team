@@ -24,7 +24,6 @@
 Clopper-Pearson 로직(analysis_a.find_stable_permutation_p_value)을 그대로
 재사용한다.
 """
-from typing import Sequence
 import sys
 from pathlib import Path
 
@@ -38,6 +37,8 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import config  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+from stats_formulas import wilson_se  # noqa: E402,F401  (하위 호환 재노출 - shared/stats_formulas.py 참조)
 
 from analysis_b import CATEGORICAL_COLS  # noqa: E402
 
@@ -139,22 +140,8 @@ def permutation_test_for_risk_count(
     )
 
 
-def wilson_se(p: float, n: int) -> float:
-    """
-    Wilson 표준오차 - 비율 추정량(이탈률 등)의 표준 공식.
-
-    Hanley-McNeil은 AUC 추정량 전용 공식이라 risk_count 최고위험구간의
-    부트스트랩(단순 이탈률 신뢰구간)에는 맞지 않는다. Wilson 공식은 비율
-    추정량의 표준오차를 닫힌 형태로 즉시 계산한다 - 부트스트랩 없이도
-    "이론적으로 기대되는 측정 불안정성"을 구할 수 있다는 점에서
-    Hanley-McNeil과 같은 역할을 한다.
-
-    ⚠️ 이 공식도 "단순 임의추출"을 가정한다. 우리는 매 부트스트랩 반복마다
-    모델을 재학습하지 않고 단순 재추출만 하므로(AUC 부트스트랩과 다름),
-    구조적 격차(gap비율)가 AUC쪽(1.3)보다 작게(1.1 안팎) 나오는 것이
-    실측으로 확인됨 - config.SUBTRACK_Q_STRUCTURAL_GAP 참조.
-    """
-    return float(np.sqrt(p * (1 - p) / n))
+# wilson_se는 파일 상단에서 shared.stats_formulas로부터 재노출됨
+# (코드 점검 중 발견된 순환 import 문제 해결 - 12일차 보강, shared/stats_formulas.py 참조)
 
 
 def find_stable_bootstrap_count_for_risk_group(
@@ -205,53 +192,34 @@ def find_stable_bootstrap_count_for_risk_group(
     safe_ceiling = 2 * 1.96 * wilson_se(point_p, n) * structural_gap
 
     rng = np.random.RandomState(random_state)
-    boot_means: list[float] = []
-    width_history: list[float] = []
-    rows = []
-    ceiling_streak = 0
-    last_ci_low, last_ci_high = float("nan"), float("nan")
 
-    def _finish(stop_n: int) -> tuple[int, int, float, float, float, pd.DataFrame]:
-        diagnostics = pd.DataFrame(rows)
-        mean_p = float(np.mean(boot_means))
-        ci_low, ci_high = float(last_ci_low), float(last_ci_high)
-        if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
-            from gap_calibration import record_proportion_gap_observation
-            record_proportion_gap_observation(
-                n=n, point_proportion=point_p, ci_width=ci_high - ci_low,
-            )
-        return stop_n, top_value, mean_p, ci_low, ci_high, diagnostics
-
-    for i in range(1, max_iter + 1):
+    def _measure_once() -> float:
+        # ⚠️ 단순 재추출뿐(모델 재학습 없음) - 분석A/B의 measurement_fn과
+        # 달리 None을 반환할 표본부족 조건이 없다(top_group이 비어있지
+        # 않은 한 항상 측정값을 만들 수 있음).
         resampled = rng.choice(top_group, n, replace=True)
-        boot_means.append(float(np.mean(resampled)))
+        return float(np.mean(resampled))
 
-        if i % check_every == 0 and len(boot_means) >= min_n_before_check:
-            last_ci_low, last_ci_high = np.percentile(boot_means, [2.5, 97.5])
-            width = last_ci_high - last_ci_low
-            width_history.append(width)
-            rows.append({"n": i, "ci_width": width})
+    from gap_calibration import run_sequential_bootstrap
+    stop_n, boot_means, ci_low, ci_high, rows = run_sequential_bootstrap(
+        measurement_fn=_measure_once,
+        safe_ceiling=safe_ceiling,
+        max_iter=max_iter,
+        check_every=check_every,
+        min_n_before_check=min_n_before_check,
+        ceiling_patience=ceiling_patience,
+        self_stability_window=self_stability_window,
+        self_stability_threshold=self_stability_threshold,
+    )
 
-            if width <= safe_ceiling:
-                ceiling_streak += 1
-            else:
-                ceiling_streak = 0
-
-            self_stable = False
-            if len(width_history) >= self_stability_window + 1:
-                recent = width_history[-(self_stability_window + 1):]
-                rel_changes = [
-                    abs(recent[j + 1] - recent[j]) / recent[j]
-                    for j in range(len(recent) - 1) if recent[j] > 0
-                ]
-                self_stable = bool(rel_changes) and all(
-                    rc < self_stability_threshold for rc in rel_changes
-                )
-
-            if ceiling_streak >= ceiling_patience or self_stable:
-                return _finish(i)
-
-    return _finish(max_iter)
+    diagnostics = pd.DataFrame(rows)
+    mean_p = float(np.mean(boot_means))
+    if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
+        from gap_calibration import record_proportion_gap_observation
+        record_proportion_gap_observation(
+            n=n, point_proportion=point_p, ci_width=ci_high - ci_low,
+        )
+    return stop_n, top_value, mean_p, ci_low, ci_high, diagnostics
 
 
 def bootstrap_top_risk_group_ci(
