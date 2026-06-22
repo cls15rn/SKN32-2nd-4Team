@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib import theme as T  # noqa: E402
 from lib import data as D  # noqa: E402
-from views import overview, priority, analysis  # noqa: E402
+from views import overview, priority, analysis, whatif  # noqa: E402
 
 st.set_page_config(page_title="고객 이탈 예측 대시보드",
                    page_icon="📉", layout="wide")
@@ -42,13 +42,16 @@ PG_PRIORITY = st.Page(priority.render, title="우선 대응 고객", icon="🎯"
                       url_path="priority")
 PG_ANALYSIS = st.Page(analysis.render, title="분석", icon="🧭",
                       url_path="analysis")
+PG_WHATIF = st.Page(whatif.render, title="What-If 분석", icon="🔮",
+                    url_path="whatif")
 pages = {
     "개요": [PG_OVERVIEW],
     "실행": [PG_PRIORITY],
     "분석": [PG_ANALYSIS],
+    "시뮬레이션": [PG_WHATIF],
 }
 # 홈의 진입 카드(st.page_link)가 참조할 수 있도록 Page 객체 노출
-st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS}
+st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS, "whatif": PG_WHATIF}
 nav = st.navigation(pages, position="sidebar")
 
 # ---- 사이드바: 모델 요약 + 푸터 (nav 아래) ----
