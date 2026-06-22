@@ -718,9 +718,8 @@ def get_active_df() -> tuple[pd.DataFrame, dict]:
     반환: (df, meta)  — meta["source"] = "trained"/"fallback"/"uploaded"
     """
     try:
-        import streamlit as _st
-        use_up = _st.session_state.get("use_uploaded", False)
-        up_df  = _st.session_state.get("uploaded_df", None)
+        use_up = st.session_state.get("use_uploaded", False)
+        up_df  = st.session_state.get("uploaded_df", None)
     except Exception:
         use_up, up_df = False, None
 

@@ -240,47 +240,6 @@ def _sel_rows(event) -> list:
 
 
 # ---------------------------------------------------------------------------
-# CSV 업로드 UI — 처리 로직은 data.py의 score_uploaded_csv() 에 위임
-# ---------------------------------------------------------------------------
-def _upload_panel():
-    """CSV 업로드 UI — 성공 시 scored DataFrame 반환, 아니면 None."""
-    T.html(
-        '<div style="background:#f3f6fc;border-radius:14px;padding:1.2rem 1.4rem;'
-        'margin-bottom:1rem">'
-        '<div style="font-weight:700;font-size:.95rem;margin-bottom:.5rem">'
-        '📂 새 고객 데이터 업로드</div>'
-        '<div style="font-size:.84rem;color:#667085;line-height:1.7">'
-        '원본 IBM Telco 형식의 CSV 파일을 업로드하면 동일한 대시보드로 분석합니다.<br>'
-        '필수 컬럼: customerID, tenure, MonthlyCharges, TotalCharges, Churn 포함 21개 컬럼<br>'
-        '<span style="color:#c0392b;font-weight:600">'
-        '※ 개인정보가 포함된 실제 데이터는 업로드하지 마세요.</span>'
-        '</div></div>'
-    )
-    uploaded = st.file_uploader(
-        "CSV 파일 선택", type=["csv"],
-        key="ov_csv_upload", label_visibility="collapsed",
-    )
-    if uploaded is None:
-        T.html(
-            '<div style="text-align:center;padding:2.5rem;color:#667085;font-size:.9rem">'
-            '파일을 업로드하면 이 탭에 분석 결과가 표시됩니다.</div>'
-        )
-        return None
-    try:
-        raw = pd.read_csv(uploaded)
-    except Exception as e:
-        st.error(f"CSV 읽기 실패: {e}")
-        return None
-    with st.spinner("데이터 처리 중…"):
-        df_up, err = D.score_uploaded_csv(raw)
-    if df_up is None:
-        st.error(f"⚠️ {err}")
-        return None
-    st.success(f"✅ {len(df_up):,}명 로드 완료 · 이탈확률 예측 완료")
-    return df_up
-
-
-# ---------------------------------------------------------------------------
 # 대시보드 본문 렌더 (기존 render 내용, df·meta를 인자로 받도록 분리)
 # ---------------------------------------------------------------------------
 def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:

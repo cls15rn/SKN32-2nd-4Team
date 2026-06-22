@@ -16,6 +16,7 @@ webapp/app.py — 가입 고객 이탈 예측 대시보드 (Streamlit 진입점)
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 # webapp/ 을 import 경로에 추가 (lib, views 패키지)
@@ -54,11 +55,80 @@ pages = {
 }
 # 홈의 진입 카드(st.page_link)가 참조할 수 있도록 Page 객체 노출
 st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS, "whatif": PG_WHATIF, "roi": PG_ROI}
+
+def _sidebar_datasource() -> None:
+    """사이드바 데이터소스 전환 UI.
+
+    실행 순서가 중요:
+    1) 파일 처리 먼저 → session_state 갱신
+    2) 그 후 라디오가 최신 state를 읽어 렌더
+    """
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        '<div style="font-size:.8rem;font-weight:700;color:#667085;'
+        'text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">'
+        '데이터 소스</div>',
+        unsafe_allow_html=True)
+
+    # 1) CSV 파일 업로드 — 라디오보다 먼저 실행해 session_state를 갱신한다
+    csv_file = st.sidebar.file_uploader(
+        "📂 CSV 업로드",
+        type=["csv"],
+        key="sidebar_csv_upload",
+        help="IBM Telco 형식 CSV (21개 컬럼 필수)",
+    )
+    if csv_file is not None:
+        file_id = f"{csv_file.name}_{csv_file.size}"
+        if st.session_state.get("uploaded_file_id") != file_id:
+            try:
+                raw = pd.read_csv(csv_file)
+                with st.spinner("업로드 데이터 처리 중…"):
+                    df_up, err = D.score_uploaded_csv(raw)
+                if df_up is not None:
+                    st.session_state["uploaded_df"] = df_up
+                    st.session_state["uploaded_file_id"] = file_id
+                    st.session_state["use_uploaded"] = True
+                else:
+                    st.sidebar.error(f"⚠️ {err}")
+            except Exception as e:
+                st.sidebar.error(f"CSV 읽기 실패: {e}")
+
+    # 2) 업로드된 데이터 확인 (파일 처리 후 최신 state 읽기)
+    uploaded_df = st.session_state.get("uploaded_df", None)
+    up_label = (f"업로드 데이터 ({len(uploaded_df):,}명)"
+                if uploaded_df is not None else "업로드 데이터 (없음)")
+
+    # 3) 데이터 소스 라디오 — 최신 uploaded_df 기준으로 렌더
+    src_idx = 1 if (st.session_state.get("use_uploaded", False)
+                    and uploaded_df is not None) else 0
+    src_sel = st.sidebar.radio(
+        "데이터 소스 선택",
+        ["기본 데이터 (7,043명)", up_label],
+        index=src_idx,
+        key="sidebar_src_radio",
+        label_visibility="collapsed",
+        disabled=(uploaded_df is None),
+    )
+    st.session_state["use_uploaded"] = (
+        src_sel == up_label and uploaded_df is not None
+    )
+
+    # 4) 업로드 상태 표시 + 초기화
+    if uploaded_df is not None:
+        fid   = st.session_state.get("uploaded_file_id", "")
+        fname = fid.rsplit("_", 1)[0] if "_" in fid else "업로드됨"
+        st.sidebar.caption(f"📄 {fname} · {len(uploaded_df):,}명")
+        if st.sidebar.button("✕ 업로드 데이터 초기화", key="sidebar_clear_upload"):
+            st.session_state.pop("uploaded_df", None)
+            st.session_state.pop("uploaded_file_id", None)
+            st.session_state["use_uploaded"] = False
+
+
 nav = st.navigation(pages, position="sidebar")
 
 # ---- 사이드바: 모델 요약 + 푸터 (nav 아래) ----
 try:
-    _, meta = D.get_scored()
+    _, meta = D.get_active_df()
     n = meta["n"]
     src = "학습 모델(latest)" if meta["source"] == "trained" else "자체 학습(데모)"
 except Exception:
@@ -81,66 +151,6 @@ st.sidebar.markdown(
     unsafe_allow_html=True)
 
 # ---- 사이드바: 데이터 소스 전환 ----
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    '<div style="font-size:.8rem;font-weight:700;color:#667085;'
-    'text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">'
-    '데이터 소스</div>',
-    unsafe_allow_html=True)
-
-# ── 1) CSV 파일 업로드 (라디오보다 먼저 — session_state 갱신 후 라디오가 읽어야 함)
-_csv_file = st.sidebar.file_uploader(
-    "📂 CSV 업로드",
-    type=["csv"],
-    key="sidebar_csv_upload",
-    help="IBM Telco 형식 CSV (21개 컬럼 필수)",
-)
-if _csv_file is not None:
-    _file_id = f"{_csv_file.name}_{_csv_file.size}"
-    if st.session_state.get("uploaded_file_id") != _file_id:
-        import pandas as _pd
-        try:
-            _raw = _pd.read_csv(_csv_file)
-            with st.spinner("업로드 데이터 처리 중…"):
-                _df_up, _err = D.score_uploaded_csv(_raw)
-            if _df_up is not None:
-                st.session_state["uploaded_df"] = _df_up
-                st.session_state["uploaded_file_id"] = _file_id
-                st.session_state["use_uploaded"] = True
-            else:
-                st.sidebar.error(f"⚠️ {_err}")
-        except Exception as _e:
-            st.sidebar.error(f"CSV 읽기 실패: {_e}")
-
-# ── 2) 업로드된 데이터 확인 (파일 처리 후 최신 state 읽기)
-_uploaded_df = st.session_state.get("uploaded_df", None)
-_up_label = (f"업로드 데이터 ({len(_uploaded_df):,}명)"
-             if _uploaded_df is not None else "업로드 데이터 (없음)")
-
-# ── 3) 데이터 소스 라디오 (최신 _uploaded_df 기준으로 렌더)
-_src_options = ["기본 데이터 (7,043명)", _up_label]
-_src_idx = 1 if (st.session_state.get("use_uploaded", False)
-                 and _uploaded_df is not None) else 0
-_src_sel = st.sidebar.radio(
-    "데이터 소스 선택",
-    _src_options,
-    index=_src_idx,
-    key="sidebar_src_radio",
-    label_visibility="collapsed",
-    disabled=(_uploaded_df is None),
-)
-st.session_state["use_uploaded"] = (
-    _src_sel == _up_label and _uploaded_df is not None
-)
-
-# ── 4) 업로드 상태 표시 + 초기화
-if _uploaded_df is not None:
-    _fid = st.session_state.get("uploaded_file_id", "")
-    _fname = _fid.rsplit("_", 1)[0] if "_" in _fid else "업로드됨"
-    st.sidebar.caption(f"📄 {_fname} · {len(_uploaded_df):,}명")
-    if st.sidebar.button("✕ 업로드 데이터 초기화", key="sidebar_clear_upload"):
-        st.session_state.pop("uploaded_df", None)
-        st.session_state.pop("uploaded_file_id", None)
-        st.session_state["use_uploaded"] = False
+_sidebar_datasource()
 
 nav.run()

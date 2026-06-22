@@ -544,8 +544,12 @@ def render():
         # ── 초기화 버튼 ────────────────────────────────────────────────
         st.markdown(" ")
         if st.button("↺ 원래 값으로 초기화", key=f"wi_reset_{selected_cid}"):
-            if state_key in st.session_state:
-                del st.session_state[state_key]
+            # state_key 삭제
+            st.session_state.pop(state_key, None)
+            # 위젯 key도 함께 삭제 — 위젯 자체 state를 지워야 화면이 원래 값으로 돌아감
+            for attr in EDITABLE_ATTRS:
+                st.session_state.pop(f"wi_{attr['col']}_{selected_cid}", None)
+            st.session_state.pop(f"wi_mc_{selected_cid}", None)
             st.rerun()
 
     # ── 하단: 전체 고객 비교 인사이트 ──────────────────────────────────────

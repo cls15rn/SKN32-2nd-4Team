@@ -205,6 +205,47 @@ def _breakeven_callout(res: pd.DataFrame, conversion_rate: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ROI 계산 헬퍼 — render() 에서 분리해 단일 책임 원칙 준수
+# ---------------------------------------------------------------------------
+def _calc_roi_rows(
+    rows_calc: list[tuple],
+    seg_stats: pd.DataFrame,
+    n_intervene: dict,
+    conversion_rate: float,
+) -> pd.DataFrame:
+    """세그먼트별 ROI 계산 결과 DataFrame 반환.
+
+    rows_calc: [(segment, offer_cost_per), ...]  — 세그먼트마다 단가가 다를 수 있음
+    """
+    result_rows = []
+    for seg, cost_per in rows_calc:
+        r_stat = seg_stats[seg_stats["segment"] == seg].iloc[0]
+        n = n_intervene.get(seg, 0)
+        if n == 0:
+            continue
+        ltv_per   = float(r_stat["avg_mc"]) * float(r_stat["remaining"])
+        saved_ltv = n * conversion_rate * ltv_per
+        cost      = n * cost_per
+        net       = saved_ltv - cost
+        roi_pct   = (net / cost * 100) if cost > 0 else float("nan")
+        breakeven = (cost / (n * ltv_per)) if (n * ltv_per) > 0 else float("nan")
+        result_rows.append({
+            "segment":      seg,
+            "name":         r_stat["name"],
+            "range":        r_stat["range"],
+            "n_intervene":  n,
+            "offer_cost":   cost,
+            "saved_ltv":    saved_ltv,
+            "net":          net,
+            "roi_pct":      roi_pct,
+            "breakeven_cr": breakeven,
+            "avg_mc":       r_stat["avg_mc"],
+            "remaining":    r_stat["remaining"],
+        })
+    return pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
 # 세그먼트별 예상 수익 가로 막대
 # ---------------------------------------------------------------------------
 def _net_bars(res: pd.DataFrame) -> str:
@@ -332,33 +373,7 @@ def render():
             cost_per = offer_cost_fn(r["avg_mc"])
             rows_calc.append((seg, cost_per))
 
-        # roi_calc 호출 — 세그먼트마다 offer_cost_per가 다를 수 있어 개별 계산 후 합침
-        result_rows = []
-        for seg, cost_per in rows_calc:
-            r_stat = seg_stats[seg_stats["segment"] == seg].iloc[0]
-            n = n_intervene.get(seg, 0)
-            if n == 0:
-                continue
-            ltv_per   = float(r_stat["avg_mc"]) * float(r_stat["remaining"])
-            saved_ltv = n * conversion_rate * ltv_per
-            cost      = n * cost_per
-            net       = saved_ltv - cost
-            roi_pct   = (net / cost * 100) if cost > 0 else float("nan")
-            breakeven = (cost / (n * ltv_per)) if (n * ltv_per) > 0 else float("nan")
-            result_rows.append({
-                "segment":     seg,
-                "name":        r_stat["name"],
-                "range":       r_stat["range"],
-                "n_intervene": n,
-                "offer_cost":  cost,
-                "saved_ltv":   saved_ltv,
-                "net":         net,
-                "roi_pct":     roi_pct,
-                "breakeven_cr": breakeven,
-                "avg_mc":      r_stat["avg_mc"],
-                "remaining":   r_stat["remaining"],
-            })
-        res = pd.DataFrame(result_rows)
+        res = _calc_roi_rows(rows_calc, seg_stats, n_intervene, conversion_rate)
 
         if res.empty:
             T.html('<div class="callout">대상 인원이 0명입니다. 슬라이더를 조정해 주세요.</div>')
