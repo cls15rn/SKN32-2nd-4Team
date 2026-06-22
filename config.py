@@ -161,7 +161,11 @@ SUBTRACK_Q_STRUCTURAL_GAP = 1.1   # [콜드스타트 폴백] 모델재학습이 
 # 더 안정적이었음(0.8433 vs 0.8347) - 고정값이 데이터 규모에 안 맞았다는 신호.
 XGBOOST_MAX_DEPTH_CANDIDATES = [3, 4, 5, 6]
 XGBOOST_N_ESTIMATORS_CANDIDATES = [100, 200, 300]
-XGBOOST_LEARNING_RATE = 0.1  # 이건 탐색 대상에 포함하지 않음 - 관행값으로 고정, 필요시 후속 확장
+# ⚠️ [정정] learning_rate도 max_depth/n_estimators와 같은 GridSearchCV 탐색
+# 대상으로 편입 - 예전에는 0.1로 고정하고 "관행값, 필요시 후속 확장"이라는
+# 주석만 남겨둔 채 탐색에서 제외되어 있었다. max_depth/n_estimators는 데이터가
+# 정하게 하면서 learning_rate만 사람이 고정한 것은 일관성이 깨진 지점이었다.
+XGBOOST_LEARNING_RATE_CANDIDATES = [0.01, 0.05, 0.1, 0.2]
 # ⚠️ ANALYSIS_A_CV_FOLDS와 값이 같아도(둘 다 5) 의미가 다른 별개 설정이다 -
 # 같은 이름으로 묶으면 "NUMERIC_COLS가 파일마다 다른 의미였던" 혼동이
 # 재발할 수 있어 의도적으로 분리.
