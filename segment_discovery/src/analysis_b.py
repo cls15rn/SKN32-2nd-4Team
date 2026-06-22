@@ -348,3 +348,50 @@ def run_analysis_b(
             "n_permutations_used": n_permutations_used,
         })
     return pd.DataFrame(rows)
+
+
+def extract_risk_attribute_values(
+    df_train_with_segment: pd.DataFrame, result_b: pd.DataFrame,
+) -> dict[str, str]:
+    """
+    분석B 결과(top_attributes)에서 서브트랙Q가 쓸 {속성: 위험값} 매핑을
+    자동으로 추출한다 - 코드 점검 중 발견된 정합성 버그를 해결.
+
+    ⚠️ 발견된 문제: 기존 app.py는 risk_attribute_values를 사람이 직접
+    하드코딩했는데(Contract, PaymentMethod, InternetService, OnlineSecurity,
+    TechSupport), 그중 PaymentMethod·TechSupport는 분석B의 top_attributes에
+    *단 한 번도 등장한 적이 없는* 속성이었다(과거 메모 기록·현재 실행 모두
+    확인). 메모 4.1-B는 "분석B의 검증을 그대로 물려받음, 새로 임의 선정하지
+    않음"이라고 명시하는데, 실제 코드는 그 원칙을 어기고 있었다 - 발표/인사이트
+    효과를 위해 의도적으로 추가했다는 근거도 없어(주석에도 "분석B 결과에서
+    위험값을 매핑"이라고만 적혀 있음) 정합성 버그로 판단해 수정한다.
+
+    ⚠️ 범주형 속성만 자동화 가능: top_attributes에는 연속형(MonthlyCharges
+    등)도 섞여 있는데, 연속형은 "위험값"이라는 개념 자체가 정의되지 않는다
+    (이탈률이 가장 높은 단일 값이 아니라 구간/방향의 문제) - 이 함수는
+    범주형 속성만 다루고, 연속형은 risk_attribute_values에서 제외한다
+    (서브트랙Q는 범주형 위험신호 보유개수를 세는 게 원래 설계 의도이므로,
+    연속형을 빼는 것이 오히려 원래 설계에 더 부합함).
+
+    위험값 선정 규칙: 세그먼트 내에서 해당 속성의 값별 이탈률을 계산해
+    가장 높은 값을 위험값으로 채택 - "그룹별 이탈률 최댓값"이라는 단순한
+    규칙으로 기존에 사람이 손으로 적었던 매핑(Contract=Month-to-month,
+    InternetService=Fiber optic, OnlineSecurity=No)과 정확히 일치함을
+    실측으로 확인했다.
+
+    Returns
+    -------
+    risk_attribute_values : {속성명: 위험값} - 여러 세그먼트에서 같은
+        속성이 반복 등장해도 한 번만 포함(나중 세그먼트가 덮어씀 - 위험값
+        자체는 속성에 종속적이라 세그먼트가 달라도 보통 동일하게 나옴).
+    """
+    risk_attribute_values: dict[str, str] = {}
+    for _, row in result_b.iterrows():
+        segment_id = row["segment"]
+        df_segment = df_train_with_segment[df_train_with_segment["segment"] == segment_id]
+        for attr in row["top_attributes"]:
+            if attr not in CATEGORICAL_COLS:
+                continue  # 연속형은 "위험값" 개념이 없어 자동화 대상에서 제외
+            churn_by_value = df_segment.groupby(attr)["ChurnFlag"].mean()
+            risk_attribute_values[attr] = churn_by_value.idxmax()
+    return risk_attribute_values

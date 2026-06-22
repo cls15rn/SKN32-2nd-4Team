@@ -28,7 +28,7 @@ import config  # noqa: E402
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from analysis_a import run_analysis_a, make_segment_column  # noqa: E402
-from analysis_b import run_analysis_b  # noqa: E402
+from analysis_b import extract_risk_attribute_values, run_analysis_b  # noqa: E402
 from preprocessing import run_preprocessing  # noqa: E402
 from subtrack_q import run_subtrack_q  # noqa: E402
 
@@ -60,15 +60,14 @@ def main(csv_path: str, output_path: Path = OUTPUT_PATH) -> dict:
     print(result_b.to_string(index=False))
 
     print("[4/4] 서브 트랙 Q — risk_count(메인) + K-means(보조)")
-    # 분석 B가 찾은 세그먼트별 top 위험속성에서, 위험으로 판단되는 값을
-    # 데이터 EDA로 미리 확인한 매핑(실제 운영 시에는 분석B 결과에서 자동 추출 권장)
-    risk_attribute_values = {
-        "Contract": "Month-to-month",
-        "PaymentMethod": "Electronic check",
-        "InternetService": "Fiber optic",
-        "OnlineSecurity": "No",
-        "TechSupport": "No",
-    }
+    # ⚠️ [정정] 예전에는 risk_attribute_values를 사람이 직접 하드코딩했는데,
+    # 그중 PaymentMethod·TechSupport는 분석B의 top_attributes에 단 한 번도
+    # 등장한 적이 없는 속성이었다 - 메모 4.1-B("분석B의 검증을 그대로 물려받음,
+    # 새로 임의 선정하지 않음")라는 원칙을 코드가 어기고 있던 정합성 버그.
+    # extract_risk_attribute_values가 분석B 결과(result_b)에서 범주형
+    # 위험속성의 위험값만 자동으로 추출한다 - 연속형(MonthlyCharges)은 "위험값"
+    # 개념이 없어 제외됨(analysis_b.extract_risk_attribute_values 참조).
+    risk_attribute_values = extract_risk_attribute_values(df_train, result_b)
     result_q = run_subtrack_q(df_train, risk_attribute_values)
     print(f"      risk_count단독 AUC: {result_q['risk_count_only_auc']:.4f}, "
           f"p={result_q['p_value']:.4f} (n_permutations_used={result_q['n_permutations_used']})")
