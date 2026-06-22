@@ -178,7 +178,8 @@ hr.soft {{ border:none; border-top:1px solid #eef0f6; margin:.9rem 0; }}
 
 /* 분석B 속성 그룹 패널 — 속성별로 묶어 시각적으로 구분 */
 .attr-group {{ border:1px solid {CARD_BORDER}; border-radius:12px; background:#f7f9fd;
-              padding:.75rem .95rem .4rem; margin-bottom:.7rem; }}
+              padding:.75rem .95rem .4rem; margin-bottom:.7rem;
+              break-inside:avoid; -webkit-column-break-inside:avoid; }}
 .attr-group .ag-title {{ font-weight:700; font-size:.95rem; color:{INK}; margin:0 0 .55rem;
                         display:flex; align-items:center; gap:.45rem; }}
 .attr-group .ag-title::before {{ content:""; display:inline-block; width:3px; height:13px;
