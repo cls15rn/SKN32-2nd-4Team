@@ -86,7 +86,7 @@ def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt
             x="x:Q", y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), text="t:N")
         extra, pt = [bands, labels], False
     else:
-        sidx = seg_names.index(seg_sel)
+        sidx = _seg_name_to_idx.get(seg_sel, 0)
         curve = D.tenure_churn_curve(dff)
         lo, hi = seg_ranges[sidx]
         x_domain = [lo, hi]
@@ -119,7 +119,7 @@ def _risk_body(scope_df, rules, seg_sel, seg_names) -> str:
         top, scope_label = set(), "전체 고객"
         sub_a = "세그먼트마다 핵심 요소가 다릅니다 — 상단에서 세그먼트를 고르면 ‘핵심’ 표시"
     else:
-        sidx = seg_names.index(seg_sel)
+        sidx = _seg_name_to_idx.get(seg_sel, 0)
         top = set(D.segment_validation(rules, sidx).get("top_attributes", []))
         scope_label = seg_sel
         sub_a = "해당 요소를 가진 고객의 이탈률 · ‘핵심’ = 분석 B 검증 요소"
@@ -246,6 +246,8 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
     rules = D.load_rules()
     boundaries = rules["analysis_a"]["boundaries"]
     seg_names = [D.SEGMENT_NAMES[i] for i in range(len(D.SEGMENT_NAMES))]
+    # 세그먼트 이름 → 인덱스 매핑 (seg_names 순서 고정에 암묵적 의존 방지)
+    _seg_name_to_idx = {name: i for i, name in enumerate(seg_names)}
 
     main, rail = st.columns([3.3, 1], gap="large")
 
@@ -264,7 +266,7 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
                '&nbsp;&nbsp;(신규=인터넷·요금, 장기=계약형태)<br>'
                '✓ 위험신호가 쌓일수록 이탈이 급증합니다</div></div>')
 
-    dff = df if seg_sel == "전체" else df[df["segment"] == seg_names.index(seg_sel)]
+    dff = df if seg_sel == "전체" else df[df["segment"] == _seg_name_to_idx.get(seg_sel, 0)]
 
     with main:
         s = D.overview_stats(dff)

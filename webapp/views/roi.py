@@ -39,6 +39,23 @@ def _roi_color(v: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 혜택 단가 계산 함수 — lambda 대신 명명 함수로 정의 (PEP8 E731)
+# ---------------------------------------------------------------------------
+def _cost_fixed(offer_fixed: float):
+    """고정 금액 혜택 — avg_mc와 무관하게 동일 금액."""
+    def _fn(avg_mc: float) -> float:  # noqa: ARG001
+        return float(offer_fixed)
+    return _fn
+
+
+def _cost_pct(offer_pct: float):
+    """월 요금 할인 혜택 — 세그먼트 평균 월요금의 N% (1개월치)."""
+    def _fn(avg_mc: float) -> float:
+        return avg_mc * offer_pct / 100
+    return _fn
+
+
+# ---------------------------------------------------------------------------
 # 개별 세그먼트 입력 컨트롤
 # ---------------------------------------------------------------------------
 def _seg_input(r: pd.Series, df_full: pd.DataFrame) -> tuple[int, bool]:
@@ -312,7 +329,7 @@ def render():
                 key="roi_offer_fixed",
             )
             # 세그먼트별로 offer_cost_per는 동일 (고정)
-            offer_cost_fn = lambda avg_mc: float(offer_fixed)
+            offer_cost_fn = _cost_fixed(offer_fixed)
             offer_label = f"고정 혜택 ${offer_fixed}/인"
         else:
             offer_pct = st.slider(
@@ -321,7 +338,7 @@ def render():
                 key="roi_offer_pct",
             )
             # 세그먼트 평균 월요금 기준으로 환산 (1개월치 할인)
-            offer_cost_fn = lambda avg_mc: avg_mc * offer_pct / 100
+            offer_cost_fn = _cost_pct(offer_pct)
             offer_label = f"월 요금 {offer_pct}% 할인"
 
         conversion_rate = st.slider(

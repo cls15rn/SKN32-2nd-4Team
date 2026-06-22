@@ -101,18 +101,16 @@ EDITABLE_ATTRS = [
     },
 ]
 
-# 범주형 속성만 (슬라이더 제외)
+# 범주형 속성만 (슬라이더 제외) — 숫자형(MonthlyCharges 슬라이더)은 EDITABLE_ATTRS 마지막 항목으로 직접 참조
 CAT_ATTRS = [a for a in EDITABLE_ATTRS if a["options"] is not None]
-NUM_ATTRS = [a for a in EDITABLE_ATTRS if a["options"] is None]
 
 
 # ---------------------------------------------------------------------------
 # 예측 헬퍼 — 단일 행 변형 후 이탈 확률 재산출
 # ---------------------------------------------------------------------------
-def _predict_single(row_dict: dict, base_df: pd.DataFrame) -> float:
+def _predict_single(row_dict: dict) -> float:
     """
     row_dict: 원본 컬럼 값 dict (변경된 값 포함)
-    base_df:  전체 데이터프레임 (get_scored 반환값) — 인코딩 기준으로만 참조
     반환: 이탈 확률 float (0~1)
     """
     clf, feature_cols = D.get_whatif_model()
@@ -123,7 +121,7 @@ def _predict_single(row_dict: dict, base_df: pd.DataFrame) -> float:
     single = pd.DataFrame([row_dict])
 
     # 2) 원본과 동일한 전처리 적용
-    single = _preprocess_single(single, base_df, feature_cols)
+    single = _preprocess_single(single, feature_cols)
     if single is None:
         return float("nan")
 
@@ -135,13 +133,10 @@ def _predict_single(row_dict: dict, base_df: pd.DataFrame) -> float:
 
 
 def _preprocess_single(single: pd.DataFrame,
-                        base_df: pd.DataFrame,
                         feature_cols: list[str]) -> pd.DataFrame | None:
     """단일 행을 feature_cols 기준으로 전처리.
 
-    BINARY_MAP_COLS / CATEGORICAL_COLS는 data.py가 shared/columns.py에서
-    이미 import해 모듈 상수로 노출하므로 D를 통해 직접 참조한다.
-    sys.path 조작 불필요.
+    BINARY_MAP_COLS / CATEGORICAL_COLS는 D를 통해 직접 참조 (data.py가 shared/columns.py에서 import).
     """
     work = single.copy()
 
@@ -349,8 +344,13 @@ def render():
         )
     fdf = df.copy()
     if seg_filter != "전체":
-        seg_idx = int(seg_filter.split("세그먼트 ")[1][0]) - 1
-        fdf = fdf[fdf["segment"] == seg_idx]
+        _seg_name_to_idx = {
+            f"{D.SEGMENT_NAMES[i]} ({D.SEGMENT_RANGES[i]})": i
+            for i in range(len(D.SEGMENT_NAMES))
+        }
+        seg_idx = _seg_name_to_idx.get(seg_filter)
+        if seg_idx is not None:
+            fdf = fdf[fdf["segment"] == seg_idx]
 
     # 이탈 위험 높은 순으로 정렬한 고객 목록
     fdf_sorted = fdf.sort_values("이탈확률", ascending=False)
@@ -500,7 +500,7 @@ def render():
         row_modified = row.to_dict()
         row_modified.update(cur)
 
-        new_prob = _predict_single(row_modified, df)
+        new_prob = _predict_single(row_modified)
 
         st.markdown(" ")
         T.html(_before_after_card(orig_prob, new_prob))
@@ -509,16 +509,12 @@ def render():
         if changed_attrs and not np.isnan(new_prob):
             diff_pct = (new_prob - orig_prob) * 100
             if diff_pct < -1:
-                direction = "낮아"
-                color_dir = T.GOOD
                 key_effects = " · ".join(c["effect"] for c in changed_attrs[:2])
                 summary = (
                     f"속성 변경으로 이탈 확률이 <b>{abs(diff_pct):.1f}%p 낮아집니다</b>. "
                     f"{key_effects}"
                 )
             elif diff_pct > 1:
-                direction = "높아"
-                color_dir = T.CORAL
                 summary = (
                     f"이 방향의 변경은 이탈 확률을 <b>{diff_pct:.1f}%p 높입니다</b>. "
                     f"고객 리텐션에 불리한 방향입니다."
