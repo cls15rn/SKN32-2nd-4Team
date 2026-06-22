@@ -206,11 +206,11 @@ def main(csv_path: str, rules_path: str):
         "f1_increment_vs_stage2": round(contribution["f1_increment"], 4),
     })
 
-    print(f"      model.pkl, feature_transformer.pkl, predictions.csv, "
-          f"stage_metrics.csv, metadata.json")
+    print("      model.pkl, feature_transformer.pkl, predictions.csv, "
+          "stage_metrics.csv, metadata.json")
     print(f"      -> outputs/versions/{run_timestamp}/  (이번 버전 보관)")
-    print(f"      -> outputs/latest/                    (predict.py 가 보는 위치)")
-    print(f"      -> outputs/run_history.csv             (실행 기록 누적)")
+    print("      -> outputs/latest/                    (predict.py 가 보는 위치)")
+    print("      -> outputs/run_history.csv             (실행 기록 누적)")
 
 
 if __name__ == "__main__":

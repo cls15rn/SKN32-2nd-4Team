@@ -22,6 +22,8 @@ from sklearn.tree import DecisionTreeRegressor
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import config  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+from stats_formulas import hanley_mcneil_se  # noqa: E402,F401  (하위 호환 재노출 - shared/stats_formulas.py 참조)
 
 
 # ---------------------------------------------------------------------------
@@ -451,24 +453,8 @@ def bootstrap_auc_confidence_interval(
     return float(boot_aucs.mean()), float(ci_low), float(ci_high)
 
 
-def hanley_mcneil_se(auc: float, n_positive: int, n_negative: int) -> float:
-    """
-    Hanley & McNeil(1982)의 AUC 표준오차 근사 공식.
-    표본크기·이탈률(불균형도)·AUC만으로 "이론적으로 기대되는 측정 불안정성"을
-    부트스트랩 없이 즉시 계산한다 - Cohen 효과크기처럼 사전에 닫힌 형태로
-    구해지는 공식이지만, 정확히는 AUC 추정량의 분산을 위한 표준 통계 공식이다.
-
-    ⚠️ 이 공식은 "고정된 분류기"의 AUC를 가정한다. 우리는 매 부트스트랩
-    반복마다 RandomForest를 새로 학습시키므로(OOB 방식), 실제 측정값은
-    이 이론값보다 항상 더 넓게 나오는 구조적 격차가 있다(실측 확인됨) -
-    그래서 이 값을 "목표"가 아니라 "안전 상한의 기준선"으로만 쓴다.
-    """
-    q1 = auc / (2 - auc)
-    q2 = 2 * auc**2 / (1 + auc)
-    return float(np.sqrt(
-        (auc * (1 - auc) + (n_positive - 1) * (q1 - auc**2) + (n_negative - 1) * (q2 - auc**2))
-        / (n_positive * n_negative)
-    ))
+# hanley_mcneil_se는 파일 상단에서 shared.stats_formulas로부터 재노출됨
+# (코드 점검 중 발견된 순환 import 문제 해결 - 12일차 보강, shared/stats_formulas.py 참조)
 
 
 def find_stable_bootstrap_count(
@@ -544,66 +530,42 @@ def find_stable_bootstrap_count(
     safe_ceiling = 2 * 1.96 * se_hm * structural_gap
 
     rng = np.random.RandomState(random_state)
-    boot_aucs: list[float] = []
-    width_history: list[float] = []
-    rows = []
-    ceiling_streak = 0
-    last_ci_low, last_ci_high = float("nan"), float("nan")
 
-    def _finish(stop_n: int) -> tuple[int, float, float, float, pd.DataFrame]:
-        diagnostics = pd.DataFrame(rows)
-        mean_auc = float(np.mean(boot_aucs))
-        ci_low, ci_high = float(last_ci_low), float(last_ci_high)
-        if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
-            from gap_calibration import record_auc_gap_observation
-            record_auc_gap_observation(
-                n=n, point_auc=point_auc, n_positive=n_positive,
-                n_negative=n_negative, ci_width=ci_high - ci_low,
-            )
-        return stop_n, mean_auc, ci_low, ci_high, diagnostics
-
-    for i in range(1, max_iter + 1):
+    def _measure_once() -> float | None:
         boot_idx = rng.choice(n, n, replace=True)
         oob_mask = np.ones(n, dtype=bool)
         oob_mask[np.unique(boot_idx)] = False
         oob_idx = np.where(oob_mask)[0]
 
         if len(oob_idx) < 10 or len(np.unique(y[oob_idx])) < 2 or len(np.unique(y[boot_idx])) < 2:
-            continue
+            return None
 
         model = RandomForestClassifier(n_estimators=100, random_state=random_state)
         model.fit(X[boot_idx], y[boot_idx])
         proba = model.predict_proba(X[oob_idx])[:, 1]
-        boot_aucs.append(roc_auc_score(y[oob_idx], proba))
+        return roc_auc_score(y[oob_idx], proba)
 
-        if i % check_every == 0 and len(boot_aucs) >= min_n_before_check:
-            last_ci_low, last_ci_high = np.percentile(boot_aucs, [2.5, 97.5])
-            width = last_ci_high - last_ci_low
-            width_history.append(width)
-            rows.append({"n": i, "ci_width": width})
+    from gap_calibration import run_sequential_bootstrap
+    stop_n, boot_aucs, ci_low, ci_high, rows = run_sequential_bootstrap(
+        measurement_fn=_measure_once,
+        safe_ceiling=safe_ceiling,
+        max_iter=max_iter,
+        check_every=check_every,
+        min_n_before_check=min_n_before_check,
+        ceiling_patience=ceiling_patience,
+        self_stability_window=self_stability_window,
+        self_stability_threshold=self_stability_threshold,
+    )
 
-            # 조건 ①: 안전 상한보다 좁은가
-            if width <= safe_ceiling:
-                ceiling_streak += 1
-            else:
-                ceiling_streak = 0
-
-            # 조건 ②: 최근 변화가 충분히 작은가 (자기 안정성, 상한 도달 못해도 안전망)
-            self_stable = False
-            if len(width_history) >= self_stability_window + 1:
-                recent = width_history[-(self_stability_window + 1):]
-                rel_changes = [
-                    abs(recent[j + 1] - recent[j]) / recent[j]
-                    for j in range(len(recent) - 1) if recent[j] > 0
-                ]
-                self_stable = bool(rel_changes) and all(
-                    rc < self_stability_threshold for rc in rel_changes
-                )
-
-            if ceiling_streak >= ceiling_patience or self_stable:
-                return _finish(i)
-
-    return _finish(max_iter)
+    diagnostics = pd.DataFrame(rows)
+    mean_auc = float(np.mean(boot_aucs))
+    if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
+        from gap_calibration import record_auc_gap_observation
+        record_auc_gap_observation(
+            n=n, point_auc=point_auc, n_positive=n_positive,
+            n_negative=n_negative, ci_width=ci_high - ci_low,
+        )
+    return stop_n, mean_auc, ci_low, ci_high, diagnostics
 
 
 # ---------------------------------------------------------------------------
