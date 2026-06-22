@@ -79,18 +79,16 @@
   ],
   "subtrack_q": {
     "risk_attribute_values": {
-      "Contract": "Month-to-month",
-      "PaymentMethod": "Electronic check",
       "InternetService": "Fiber optic",
       "OnlineSecurity": "No",
-      "TechSupport": "No"
+      "Contract": "Month-to-month"
     },
-    "risk_count_only_auc": 0.7930403082023966,
+    "risk_count_only_auc": 0.7828396940240657,
     "p_value": 0.0,
     "n_permutations_used": 60,
-    "top_risk_count_value": 5,
-    "ci_low": 0.6195605187319885,
-    "ci_high": 0.689193083573487,
+    "top_risk_count_value": 3,
+    "ci_low": 0.5596774193548387,
+    "ci_high": 0.6091129032258065,
     "n_bootstrap_used": 40
   }
 }

@@ -72,6 +72,37 @@ def test_search_total_combinations_matches_grid_size():
     assert len(result.cv_results) == expected_combinations
 
 
+def test_search_uses_configured_cv_fold_count():
+    """
+    ⚠️ 핵심 회귀 대상: config.XGBOOST_SEARCH_CV_FOLDS가 실제로 GridSearchCV에
+    전달되는지 확인한다 - 11일차에 발견했던 "config엔 정의했지만 코드가
+    그 값을 참조하지 않는" 패턴(ANALYSIS_B_BOOTSTRAP_COUNT 사례)이 여기서도
+    재발하지 않았는지 검증. GridSearchCV의 grid.cv_results_는 fold마다
+    "split{i}_test_score" 컬럼을 만들어내므로, 그 개수로 실제 적용된
+    fold 수를 직접 확인할 수 있다.
+    """
+    from sklearn.model_selection import GridSearchCV
+    from train_models import XGBClassifier
+
+    X, y = _make_synthetic_classification_data()
+    # search_xgboost_hyperparameters 내부와 동일한 방식으로 GridSearchCV를
+    # 직접 호출해 raw cv_results_를 받아, split 컬럼 개수를 센다.
+    param_grid = {
+        "max_depth": config.XGBOOST_MAX_DEPTH_CANDIDATES,
+        "n_estimators": config.XGBOOST_N_ESTIMATORS_CANDIDATES,
+        "learning_rate": config.XGBOOST_LEARNING_RATE_CANDIDATES,
+    }
+    from sklearn.model_selection import StratifiedKFold
+    cv = StratifiedKFold(n_splits=config.XGBOOST_SEARCH_CV_FOLDS, shuffle=True, random_state=config.RANDOM_STATE)
+    grid = GridSearchCV(
+        XGBClassifier(eval_metric="logloss", random_state=config.RANDOM_STATE),
+        param_grid, cv=cv, scoring="roc_auc", n_jobs=1,
+    )
+    grid.fit(X, y)
+    split_columns = [k for k in grid.cv_results_.keys() if k.startswith("split") and k.endswith("_test_score")]
+    assert len(split_columns) == config.XGBOOST_SEARCH_CV_FOLDS
+
+
 def test_xgboost_kwargs_uses_searched_learning_rate_not_config_default():
     """
     ⚠️ 핵심 회귀 대상: _xgboost_kwargs가 GridSearchCV로 찾은 learning_rate을
