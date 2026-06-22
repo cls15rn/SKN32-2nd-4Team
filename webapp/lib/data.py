@@ -145,6 +145,14 @@ ANALYSIS_B_GROUPS = {
 }
 
 TARGET_PROB = 0.50  # "우선 대응 고객" = 이탈확률 50% 이상
+# 업로드 CSV 필수 컬럼 목록 (단일 출처 — 여기서만 정의)
+UPLOAD_REQUIRED_COLS = [
+    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
+    "tenure", "PhoneService", "MultipleLines", "InternetService",
+    "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
+    "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
+    "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
+]
 
 
 # ===========================================================================
@@ -642,16 +650,6 @@ def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
 # ===========================================================================
 # 전역 데이터 소스 — session_state 기반 (CSV 업로드 공유)
 # ===========================================================================
-
-
-# 업로드 CSV 필수 컬럼 목록 (단일 출처 — 여기서만 정의)
-UPLOAD_REQUIRED_COLS = [
-    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
-    "tenure", "PhoneService", "MultipleLines", "InternetService",
-    "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
-    "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
-    "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
-]
 
 
 def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:

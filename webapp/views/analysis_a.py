@@ -51,9 +51,11 @@ def _chart(curve, mean_rate, boundaries, prof):
         height=250).configure_view(strokeWidth=0)
 
 
-def section():
-    df, _ = D.get_active_df()
-    rules = D.load_rules()
+def section(df=None, rules=None):
+    if df is None:
+        df, _ = D.get_active_df()
+    if rules is None:
+        rules = D.load_rules()
     a = rules["analysis_a"]
     boundaries = a["boundaries"]
     mean_rate = df["churn"].mean()

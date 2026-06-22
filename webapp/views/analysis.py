@@ -83,8 +83,8 @@ def render():
 
     # 하단: 세부 (펼쳐 보기)
     with st.expander("세그먼트 · 생애주기 구간 도출 (분석 A)", expanded=True):
-        analysis_a.section()
+        analysis_a.section(df, rules)
     with st.expander("위험속성 · 세그먼트별 핵심 요인 (분석 B)", expanded=True):
-        analysis_b.section()
+        analysis_b.section(df, rules)
     with st.expander("위험신호 · 누적 위험 정량화 (서브트랙 Q)", expanded=True):
-        subtrack_q.section()
+        subtrack_q.section(df, rules)

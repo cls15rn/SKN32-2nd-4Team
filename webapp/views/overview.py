@@ -249,13 +249,17 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
     # 세그먼트 이름 → 인덱스 매핑 (seg_names 순서 고정에 암묵적 의존 방지)
     _seg_name_to_idx = {name: i for i, name in enumerate(seg_names)}
 
+    # 위젯 key 구분: 기본 데이터(trained/fallback) vs 업로드 데이터
+    # source가 trained/fallback 둘 다 "기본 데이터"이므로 two-value로 단순화
+    _key_sfx = "uploaded" if meta.get("source") == "uploaded" else "base"
+
     main, rail = st.columns([3.3, 1], gap="large")
 
     with rail:
         seg_sel = st.selectbox("세그먼트 필터", ["전체"] + seg_names,
-                               key=f"ov_seg_{meta.get('source','x')}")
+                               key=f"ov_seg_{_key_sfx}")
         thr = st.slider("이탈 확률 임계값", 0.0, 1.0, 0.50, 0.05,
-                        key=f"ov_thr_{meta.get('source','x')}")
+                        key=f"ov_thr_{_key_sfx}")
         T.html('<div class="info-box"><div class="ib-h">서비스 활용 방법</div>'
                '<div class="ib-body">① 세그먼트·임계값으로 화면을 좁혀 보고<br>'
                '② 아래 명단에서 고객을 클릭해<br>'
@@ -307,7 +311,7 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
     T.html(_loss_body(dff, seg_sel))
 
     with st.expander("🔬 위험 요소 · 위험 신호 조합 — 펼쳐 보기 (상단 세그먼트 필터 적용)",
-                     expanded=False, key=f"exp_risk_{meta.get('source','x')}"):
+                     expanded=False, key=f"exp_risk_{_key_sfx}"):
         scope_txt = "전체 고객" if seg_sel == "전체" else seg_sel
         T.html(f'<div class="note" style="margin-bottom:.6rem">현재 보기: <b>{scope_txt}</b> · '
                '위험 요소별 이탈률과, 위험 신호가 누적될수록 이탈이 어떻게 커지는지'
@@ -324,11 +328,11 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
         "핵심 원인": pri["핵심원인"],
     })
     with st.expander(f"🎯 예상손실 높은 순 고위험 고객 상위 {len(pri)}명 (행 클릭 → 인과 해설)",
-                     expanded=True, key=f"exp_pri_{meta.get('source','x')}"):
+                     expanded=True, key=f"exp_pri_{_key_sfx}"):
         event = st.dataframe(
             disp, hide_index=True, use_container_width=True,
             on_select="rerun", selection_mode="single-row",
-            key=f"df_pri_{meta.get('source','x')}",
+            key=f"df_pri_{_key_sfx}",
             column_config={
                 "예상손실": st.column_config.NumberColumn("예상손실($/월)", format="$%d"),
                 "이탈확률": st.column_config.NumberColumn("이탈확률", format="%d%%"),

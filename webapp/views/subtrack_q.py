@@ -5,9 +5,11 @@ from lib import data as D
 from lib import theme as T
 
 
-def section():
-    df, _ = D.get_active_df()
-    rules = D.load_rules()
+def section(df=None, rules=None):
+    if df is None:
+        df, _ = D.get_active_df()
+    if rules is None:
+        rules = D.load_rules()
     q = rules["subtrack_q"]
     mean_rate = df["churn"].mean()
 
