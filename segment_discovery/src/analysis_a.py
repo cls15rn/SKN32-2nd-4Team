@@ -22,6 +22,8 @@ from sklearn.tree import DecisionTreeRegressor
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import config  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
+from stats_formulas import hanley_mcneil_se  # noqa: E402,F401  (하위 호환 재노출 - shared/stats_formulas.py 참조)
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +298,54 @@ def segment_only_auc(
     return float(np.mean(aucs))
 
 
+def find_stable_permutation_p_value(
+    observed_statistic: float,
+    permuted_statistic_fn,
+    p_threshold: float,
+    confidence: float = config.SEQUENTIAL_PERMUTATION_CONFIDENCE,
+    check_every: int = config.SEQUENTIAL_PERMUTATION_CHECK_EVERY,
+    max_iter: int = config.SEQUENTIAL_PERMUTATION_MAX_ITER,
+) -> tuple[float, int]:
+    """
+    순열검정의 Clopper-Pearson 기반 순차적 조기중단 — 통계량 종류에 무관한
+    공통 로직 (기획_메모.md 4.1-C 보강, 4.1-E 참조).
+
+    "관측값을 넘는 순열의 비율"은 통계량이 AUC든 분산이든 그 어떤
+    것이든 항상 이항분포를 따른다는 사실을 이용한다 - 그래서 이
+    멈춤 로직 자체는 통계량을 모른다. permuted_statistic_fn(i)가
+    i번째 순열에서 계산된 통계량 하나를 반환하기만 하면 된다
+    (호출 측이 "무엇을 어떻게 섞을지"를 결정).
+
+    분석A(permutation_test_for_segment, AUC)와 서브트랙Q
+    (permutation_test_for_risk_count, risk_count별 이탈률 분산)가 이
+    함수를 공유한다 - 같은 공식을 두 곳에 따로 구현하면 한쪽만 고치고
+    다른 쪽을 놓치는 위험이 재발할 수 있다.
+
+    Returns
+    -------
+    p_value : 멈춘 시점까지 누적된 (초과횟수/반복횟수) - 추정 p값
+    n_permutations_used : 데이터가 직접 찾은 순열 반복횟수
+    """
+    exceed_count = 0
+
+    for i in range(1, max_iter + 1):
+        permuted_statistic = permuted_statistic_fn(i)
+        if permuted_statistic >= observed_statistic:
+            exceed_count += 1
+
+        if i % check_every == 0:
+            upper = stats.beta.ppf(confidence, exceed_count + 1, i - exceed_count)
+            lower = (
+                stats.beta.ppf(1 - confidence, exceed_count, i - exceed_count + 1)
+                if exceed_count > 0 else 0.0
+            )
+            if upper < p_threshold or lower > p_threshold:
+                # 어느 쪽으로든 통과기준 대비 결론이 명확해졌으면 멈춤
+                return exceed_count / i, i
+
+    return exceed_count / max_iter, max_iter
+
+
 def permutation_test_for_segment(
     segment: pd.Series, churn_flag: pd.Series,
     p_threshold: float = config.ANALYSIS_A_P_VALUE_THRESHOLD,
@@ -317,9 +367,10 @@ def permutation_test_for_segment(
 
     순열을 1개씩 누적하면서(이전 계산 안 버림), 매 check_every회마다
     "지금까지 관측값을 넘은 횟수/반복횟수"의 Clopper-Pearson 신뢰상한을
-    계산한다. 이 상한이 p_threshold(0.05)보다 확실히 낮으면(또는 신뢰하한이
-    확실히 높으면) "더 반복해도 결론이 안 바뀐다"고 보고 멈춘다 - 이항분포의
-    표준 신뢰구간 공식이라 Hanley-McNeil처럼 닫힌 형태로 계산되며, 부트스트랩
+    계산한다(공통 로직은 find_stable_permutation_p_value 참조). 이 상한이
+    p_threshold(0.05)보다 확실히 낮으면(또는 신뢰하한이 확실히 높으면)
+    "더 반복해도 결론이 안 바뀐다"고 보고 멈춘다 - 이항분포의 표준
+    신뢰구간 공식이라 Hanley-McNeil처럼 닫힌 형태로 계산되며, 부트스트랩
     G안과 달리 OOB 모델재학습 같은 구조적 추가변동성이 없어 이론값에 항상
     안정적으로 수렴한다(시드 3개 모두 정확히 일치하는 지점에서 멈춤).
 
@@ -336,25 +387,19 @@ def permutation_test_for_segment(
     observed = segment_only_auc(segment, churn_flag, random_state=random_state)
     rng = np.random.RandomState(random_state)
     y_values = churn_flag.values
-    exceed_count = 0
 
-    for i in range(1, max_iter + 1):
+    def _permuted_auc(_i: int) -> float:
         shuffled = pd.Series(rng.permutation(y_values))
-        permuted_auc = segment_only_auc(segment, shuffled, random_state=random_state)
-        if permuted_auc >= observed:
-            exceed_count += 1
+        return segment_only_auc(segment, shuffled, random_state=random_state)
 
-        if i % check_every == 0:
-            upper = stats.beta.ppf(confidence, exceed_count + 1, i - exceed_count)
-            lower = (
-                stats.beta.ppf(1 - confidence, exceed_count, i - exceed_count + 1)
-                if exceed_count > 0 else 0.0
-            )
-            if upper < p_threshold or lower > p_threshold:
-                # 어느 쪽으로든 통과기준 대비 결론이 명확해졌으면 멈춤
-                return exceed_count / i, i
-
-    return exceed_count / max_iter, max_iter
+    return find_stable_permutation_p_value(
+        observed_statistic=observed,
+        permuted_statistic_fn=_permuted_auc,
+        p_threshold=p_threshold,
+        confidence=confidence,
+        check_every=check_every,
+        max_iter=max_iter,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -408,24 +453,8 @@ def bootstrap_auc_confidence_interval(
     return float(boot_aucs.mean()), float(ci_low), float(ci_high)
 
 
-def hanley_mcneil_se(auc: float, n_positive: int, n_negative: int) -> float:
-    """
-    Hanley & McNeil(1982)의 AUC 표준오차 근사 공식.
-    표본크기·이탈률(불균형도)·AUC만으로 "이론적으로 기대되는 측정 불안정성"을
-    부트스트랩 없이 즉시 계산한다 - Cohen 효과크기처럼 사전에 닫힌 형태로
-    구해지는 공식이지만, 정확히는 AUC 추정량의 분산을 위한 표준 통계 공식이다.
-
-    ⚠️ 이 공식은 "고정된 분류기"의 AUC를 가정한다. 우리는 매 부트스트랩
-    반복마다 RandomForest를 새로 학습시키므로(OOB 방식), 실제 측정값은
-    이 이론값보다 항상 더 넓게 나오는 구조적 격차가 있다(실측 확인됨) -
-    그래서 이 값을 "목표"가 아니라 "안전 상한의 기준선"으로만 쓴다.
-    """
-    q1 = auc / (2 - auc)
-    q2 = 2 * auc**2 / (1 + auc)
-    return float(np.sqrt(
-        (auc * (1 - auc) + (n_positive - 1) * (q1 - auc**2) + (n_negative - 1) * (q2 - auc**2))
-        / (n_positive * n_negative)
-    ))
+# hanley_mcneil_se는 파일 상단에서 shared.stats_formulas로부터 재노출됨
+# (코드 점검 중 발견된 순환 import 문제 해결 - 12일차 보강, shared/stats_formulas.py 참조)
 
 
 def find_stable_bootstrap_count(
@@ -434,10 +463,11 @@ def find_stable_bootstrap_count(
     max_iter: int = config.SEQUENTIAL_MAX_ITER,
     check_every: int = config.SEQUENTIAL_CHECK_EVERY,
     min_n_before_check: int = config.SEQUENTIAL_MIN_N_BEFORE_CHECK,
-    structural_gap: float = config.SEQUENTIAL_STRUCTURAL_GAP,
+    structural_gap: float | None = None,
     ceiling_patience: int = config.SEQUENTIAL_CEILING_PATIENCE,
     self_stability_window: int = config.SEQUENTIAL_SELF_STABILITY_WINDOW,
     self_stability_threshold: float = config.SEQUENTIAL_SELF_STABILITY_THRESHOLD,
+    record_observation: bool = True,
 ) -> tuple[int, float, float, float, pd.DataFrame]:
     """
     "AUC 부트스트랩 신뢰구간을 구하려면 몇 번 재추출하면 충분한가"를
@@ -466,6 +496,19 @@ def find_stable_bootstrap_count(
     (749명, 이탈률 9.8%)는 평균 242회(1.2배 절감)로 더 신중하게 멈췄다 -
     "표본 특성에 맞게 동적으로 반복횟수가 정해진다"는 목표가 실증됨.
 
+    structural_gap 적응형 보정 (3번 항목, gap_calibration.py 참조)
+    ----------------------------------------------------------------
+    structural_gap을 명시적으로 넘기지 않으면(기본값 None), 과거 실행에서
+    누적된 관측치 중 이번 표본크기(n)와 가장 비슷한 것들의 상위 분位수를
+    안전 상한 배율로 자동 채택한다 - 새 부트스트랩을 추가로 실행하지
+    않으므로 탐색비용이 들지 않는다. 관측치가 충분히 쌓이기 전(콜드스타트)
+    에는 기존 고정값(1.3)을 그대로 쓴다. structural_gap을 직접 지정하면
+    (예: 기존 테스트 호환을 위해) 그 값을 그대로 쓰고 적응형 조회를 건너뛴다.
+
+    함수가 멈출 때, 이미 계산해놓은 값들(점추정 AUC, 표본구성, 실측 CI폭)
+    로부터 "이번 실행의 실측 gap비율"을 나눗셈 한 번으로 구해 기록한다
+    (record_observation=True일 때만, 회귀테스트 등에서는 False로 끌 수 있음).
+
     Returns
     -------
     stop_n : 멈춘 시점의 누적 부트스트랩 횟수
@@ -480,59 +523,49 @@ def find_stable_bootstrap_count(
     n_positive = int(y.sum())
     n_negative = n - n_positive
     se_hm = hanley_mcneil_se(point_auc, n_positive, n_negative)
+
+    if structural_gap is None:
+        from gap_calibration import adaptive_structural_gap
+        structural_gap, _gap_source = adaptive_structural_gap(n, statistic_type="auc_hanley_mcneil")
     safe_ceiling = 2 * 1.96 * se_hm * structural_gap
 
     rng = np.random.RandomState(random_state)
-    boot_aucs: list[float] = []
-    width_history: list[float] = []
-    rows = []
-    ceiling_streak = 0
-    last_ci_low, last_ci_high = float("nan"), float("nan")
 
-    for i in range(1, max_iter + 1):
+    def _measure_once() -> float | None:
         boot_idx = rng.choice(n, n, replace=True)
         oob_mask = np.ones(n, dtype=bool)
         oob_mask[np.unique(boot_idx)] = False
         oob_idx = np.where(oob_mask)[0]
 
         if len(oob_idx) < 10 or len(np.unique(y[oob_idx])) < 2 or len(np.unique(y[boot_idx])) < 2:
-            continue
+            return None
 
         model = RandomForestClassifier(n_estimators=100, random_state=random_state)
         model.fit(X[boot_idx], y[boot_idx])
         proba = model.predict_proba(X[oob_idx])[:, 1]
-        boot_aucs.append(roc_auc_score(y[oob_idx], proba))
+        return roc_auc_score(y[oob_idx], proba)
 
-        if i % check_every == 0 and len(boot_aucs) >= min_n_before_check:
-            last_ci_low, last_ci_high = np.percentile(boot_aucs, [2.5, 97.5])
-            width = last_ci_high - last_ci_low
-            width_history.append(width)
-            rows.append({"n": i, "ci_width": width})
-
-            # 조건 ①: 안전 상한보다 좁은가
-            if width <= safe_ceiling:
-                ceiling_streak += 1
-            else:
-                ceiling_streak = 0
-
-            # 조건 ②: 최근 변화가 충분히 작은가 (자기 안정성, 상한 도달 못해도 안전망)
-            self_stable = False
-            if len(width_history) >= self_stability_window + 1:
-                recent = width_history[-(self_stability_window + 1):]
-                rel_changes = [
-                    abs(recent[j + 1] - recent[j]) / recent[j]
-                    for j in range(len(recent) - 1) if recent[j] > 0
-                ]
-                self_stable = bool(rel_changes) and all(
-                    rc < self_stability_threshold for rc in rel_changes
-                )
-
-            if ceiling_streak >= ceiling_patience or self_stable:
-                diagnostics = pd.DataFrame(rows)
-                return i, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+    from gap_calibration import run_sequential_bootstrap
+    stop_n, boot_aucs, ci_low, ci_high, rows = run_sequential_bootstrap(
+        measurement_fn=_measure_once,
+        safe_ceiling=safe_ceiling,
+        max_iter=max_iter,
+        check_every=check_every,
+        min_n_before_check=min_n_before_check,
+        ceiling_patience=ceiling_patience,
+        self_stability_window=self_stability_window,
+        self_stability_threshold=self_stability_threshold,
+    )
 
     diagnostics = pd.DataFrame(rows)
-    return max_iter, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+    mean_auc = float(np.mean(boot_aucs))
+    if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
+        from gap_calibration import record_auc_gap_observation
+        record_auc_gap_observation(
+            n=n, point_auc=point_auc, n_positive=n_positive,
+            n_negative=n_negative, ci_width=ci_high - ci_low,
+        )
+    return stop_n, mean_auc, ci_low, ci_high, diagnostics
 
 
 # ---------------------------------------------------------------------------

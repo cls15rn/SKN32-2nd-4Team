@@ -106,7 +106,14 @@ RISK_LABELS = {
     "HighCharge": "높은 월요금(상위 30%)",
 }
 # 핵심 원인 우선순위 (이탈 신호가 강한 순) — 한 고객이 여러 위험속성을 가질 때 무엇을 대표로 보여줄지
-RISK_PRIORITY = ["Contract", "OnlineSecurity", "TechSupport", "PaymentMethod", "InternetService"]
+# RISK_PRIORITY는 segment_rules.json의 risk_attribute_values 키 순서를 따름
+# 하드코딩 대신 동적 로드 — json이 바뀌어도 자동으로 맞춰짐
+try:
+    with open(RULES_PATH, "r", encoding="utf-8") as _f:
+        _RISK_PRIORITY = list(json.load(_f)["subtrack_q"]["risk_attribute_values"].keys())
+except Exception:
+    _RISK_PRIORITY = ["Contract", "OnlineSecurity", "TechSupport", "PaymentMethod", "InternetService"]
+RISK_PRIORITY: list[str] = _RISK_PRIORITY
 
 # 위험 신호 누적(risk_count)은 서브트랙 Q가 검증한 위 5종으로 고정.
 # 아래 '표시용' 목록은 위험 요소별 이탈률/손실 표시에 검증된 연속형 드라이버(월요금)를 더한 것.
@@ -145,6 +152,14 @@ ANALYSIS_B_GROUPS = {
 }
 
 TARGET_PROB = 0.50  # "우선 대응 고객" = 이탈확률 50% 이상
+# 업로드 CSV 필수 컬럼 목록 (단일 출처 — 여기서만 정의)
+UPLOAD_REQUIRED_COLS = [
+    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
+    "tenure", "PhoneService", "MultipleLines", "InternetService",
+    "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
+    "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
+    "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
+]
 
 
 # ===========================================================================
@@ -163,17 +178,7 @@ def load_frame() -> pd.DataFrame:
     df = pd.read_csv(DATA_PATH)
     df = clean_raw_data(df)
 
-    boundaries = rules["analysis_a"]["boundaries"]
-    upper = max(df["tenure"].max(), boundaries[-1]) + 1
-    bins = [-1] + list(boundaries) + [upper]
-    df["segment"] = pd.cut(df["tenure"], bins=bins, labels=range(len(bins) - 1)).astype(int)
-    df["segment_name"] = df["segment"].map(SEGMENT_NAMES)
-
-    risk_values = rules["subtrack_q"]["risk_attribute_values"]
-    masks = pd.DataFrame(index=df.index)
-    for col, risky in risk_values.items():
-        masks[col] = (df[col] == risky).astype(int)
-    df["risk_count"] = masks.sum(axis=1)
+    df = _assign_segment_and_risk(df, rules)
 
     df["churn"] = (df["Churn"] == "Yes").astype(int)
     return df
@@ -182,6 +187,26 @@ def load_frame() -> pd.DataFrame:
 # ===========================================================================
 # 이탈확률 — 학습된 모델 우선, 없으면 자체 캐시 모델
 # ===========================================================================
+def _assign_segment_and_risk(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
+    """세그먼트 할당 + risk_count 계산 — get_scored / score_uploaded_csv 공통 로직.
+
+    df는 clean_raw_data()를 거친 상태여야 한다.
+    """
+    boundaries = rules["analysis_a"]["boundaries"]
+    upper = max(df["tenure"].max(), boundaries[-1]) + 1
+    bins = [-1] + list(boundaries) + [upper]
+    df["segment"] = pd.cut(df["tenure"], bins=bins,
+                           labels=range(len(bins) - 1)).astype(int)
+    df["segment_name"] = df["segment"].map(SEGMENT_NAMES)
+
+    risk_values = rules["subtrack_q"]["risk_attribute_values"]
+    masks = pd.DataFrame(index=df.index)
+    for col, risky in risk_values.items():
+        masks[col] = (df[col] == risky).astype(int)
+    df["risk_count"] = masks.sum(axis=1)
+    return df
+
+
 def _fallback_classifier():
     """xgboost가 있으면 그걸, 없으면 sklearn HistGradientBoosting을 쓴다(둘 다 트리 계열)."""
     try:
@@ -462,6 +487,8 @@ def loss_by_risk_attribute(t: pd.DataFrame) -> pd.DataFrame:
     rv = _ext_risk_values(rules)
     rows = []
     for col in RISK_PRIORITY_DISPLAY:
+        if col not in rv or col not in t.columns:
+            continue
         held = t[t[col] == rv[col]]
         rows.append({
             "attr": "MonthlyCharges" if col == "HighCharge" else col,
@@ -483,6 +510,8 @@ def risk_attribute_by_segment(df: pd.DataFrame) -> list:
     n_seg = len(SEGMENT_NAMES)
     out = []
     for col in RISK_PRIORITY_DISPLAY:
+        if col not in rv or col not in df.columns:
+            continue
         held = df[df[col] == rv[col]]
         segs = []
         for s in range(n_seg):
@@ -599,3 +628,113 @@ def get_whatif_model():
     clf = _fallback_classifier()
     clf.fit(X, y)
     return clf, feat3
+
+
+# ===========================================================================
+# ROI 시뮬레이션용 집계 함수
+# ===========================================================================
+
+def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """세그먼트별 ROI 시뮬레이션 기초 통계.
+
+    캐시 미적용: df를 인자로 받으므로 호출마다 다른 데이터일 수 있음
+    (기본 데이터 / 업로드 데이터 전환 지원).
+
+    반환 컬럼:
+      segment, name, range,
+      n_total       전체 고객 수
+      n_high        이탈확률 50%+ 고객 수
+      avg_mc        평균 MonthlyCharges
+      avg_tenure    평균 tenure
+      remaining     잔존기간 추정 (max_tenure - avg_tenure, 기획구현.md 9번)
+      avg_prob      평균 이탈확률
+      total_loss    예상 월손실 합계
+    """
+    max_tenure = float(df["tenure"].max())
+    rows = []
+    for seg in sorted(df["segment"].unique()):
+        sub = df[df["segment"] == seg]
+        hi  = sub[sub["이탈확률"] >= TARGET_PROB]
+        rows.append({
+            "segment":    int(seg),
+            "name":       SEGMENT_NAMES.get(int(seg), f"세그먼트 {seg+1}"),
+            "range":      SEGMENT_RANGES.get(int(seg), ""),
+            "n_total":    len(sub),
+            "n_high":     len(hi),
+            "avg_mc":     float(sub["MonthlyCharges"].mean()),
+            "avg_tenure": float(sub["tenure"].mean()),
+            "remaining":  float(max_tenure - sub["tenure"].mean()),
+            "avg_prob":   float(sub["이탈확률"].mean()),
+            "total_loss": float(sub["예상손실"].sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+# ===========================================================================
+# 전역 데이터 소스 — session_state 기반 (CSV 업로드 공유)
+# ===========================================================================
+
+
+def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:
+    """업로드된 원본 CSV DataFrame → (scored_df, error_msg).
+
+    캐시 미적용: 매 호출마다 새 DataFrame을 입력받으며,
+    결과는 app.py에서 session_state에 직접 저장해 재사용함.
+    오류 시 (None, 에러 메시지) 반환.
+    """
+    missing = [c for c in UPLOAD_REQUIRED_COLS if c not in raw.columns]
+    if missing:
+        return None, f"필수 컬럼 누락: {', '.join(missing)}"
+
+    try:
+        df = clean_raw_data(raw.copy())
+    except Exception as e:
+        return None, f"전처리 오류: {e}"
+
+    # 세그먼트 할당
+    rules = load_rules()
+    df = _assign_segment_and_risk(df, rules)
+    df["churn"] = (df["Churn"] == "Yes").astype(int)
+
+    # 이탈확률 예측
+    try:
+        clf, feature_cols = get_whatif_model()
+        work = df.copy()
+        for col in BINARY_MAP_COLS:
+            work[col] = work[col].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0)
+        multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS]
+        enc = pd.get_dummies(work, columns=multi + ["segment"])
+        for fc in feature_cols:
+            if fc not in enc.columns:
+                enc[fc] = 0
+        X = enc[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
+        df["이탈확률"] = clf.predict_proba(X)[:, 1]
+    except Exception as e:
+        return None, f"이탈확률 예측 오류: {e}"
+
+    df["예상손실"] = df["MonthlyCharges"] * df["이탈확률"]
+    df["HighCharge"] = np.where(
+        df["MonthlyCharges"] >= df["MonthlyCharges"].quantile(HIGH_CHARGE_PCTL),
+        "High", "Low"
+    )
+    return df, ""
+
+
+def get_active_df() -> tuple[pd.DataFrame, dict]:
+    """현재 활성 데이터소스를 반환.
+
+    캐시 미적용: session_state(런타임 상태)를 읽어야 하므로
+    Streamlit 캐시 대상이 될 수 없음.
+    - session_state["use_uploaded"] == True 이고 uploaded_df 가 있으면 업로드 데이터
+    - 그 외에는 get_scored() (기본 데이터)
+    반환: (df, meta)  — meta["source"] = "trained"/"fallback"/"uploaded"
+    """
+    try:
+        use_up = st.session_state.get("use_uploaded", False)
+        up_df  = st.session_state.get("uploaded_df", None)
+    except Exception:
+        use_up, up_df = False, None
+
+    if use_up and up_df is not None:
+        return up_df, {"source": "uploaded", "n": len(up_df)}
+    return get_scored()

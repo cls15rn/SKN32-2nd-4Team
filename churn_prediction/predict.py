@@ -150,7 +150,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model", default=str(DEFAULT_MODEL_PATH),
-        help=f"model.pkl 경로 (기본값: outputs/latest/model.pkl)",
+        help="model.pkl 경로 (기본값: outputs/latest/model.pkl)",
     )
     parser.add_argument(
         "--transformer", default=str(DEFAULT_TRANSFORMER_PATH),

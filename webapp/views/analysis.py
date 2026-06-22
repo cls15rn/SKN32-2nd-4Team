@@ -55,10 +55,12 @@ def _summary(df, rules):
               + f'<div {line_style}>' + "<br>".join(b_lines) + "</div>")
 
     # Q — risk_count 상승 요약
-    r5 = dist[dist["risk_count"] == 5]["rate"].iloc[0] * 100
-    mult = r5 / (mean_rate * 100)
+    top_v = rules["subtrack_q"]["top_risk_count_value"]
+    _top_rows = dist[dist["risk_count"] == top_v]["rate"]
+    r_top = (_top_rows.iloc[0] * 100) if len(_top_rows) else 0.0
+    mult = r_top / (mean_rate * 100) if mean_rate else 0.0
     card_q = (T.card_title("위험신호 (Q)", "신호가 쌓일수록 이탈 급증")
-              + f'<div {line_style}>신호 0~2개 <b>3~8%</b> → 5개 <b>{r5:.0f}%</b><br>'
+              + f'<div {line_style}>신호 0~2개 <b>3~8%</b> → {top_v}개 <b>{r_top:.0f}%</b><br>'
               + f'최고위험 = 전체 평균의 <b>{mult:.1f}배</b></div>')
 
     c1, c2, c3 = st.columns(3)
@@ -71,7 +73,7 @@ def _summary(df, rules):
 
 
 def render():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
 
     T.html(T.page_header(
@@ -83,8 +85,8 @@ def render():
 
     # 하단: 세부 (펼쳐 보기)
     with st.expander("세그먼트 · 생애주기 구간 도출 (분석 A)", expanded=True):
-        analysis_a.section()
+        analysis_a.section(df, rules)
     with st.expander("위험속성 · 세그먼트별 핵심 요인 (분석 B)", expanded=True):
-        analysis_b.section()
+        analysis_b.section(df, rules)
     with st.expander("위험신호 · 누적 위험 정량화 (서브트랙 Q)", expanded=True):
-        subtrack_q.section()
+        subtrack_q.section(df, rules)

@@ -48,7 +48,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 
-import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
@@ -76,8 +75,13 @@ def search_xgboost_hyperparameters(
     X_train_tree_12: pd.DataFrame, y_train: pd.Series,
 ) -> XGBoostSearchResult:
     """
-    2단계 입력(feature_cols_12)으로 max_depth/n_estimators를 교차검증
-    (AUC 최대화)으로 탐색 - 분석A의 ccp_alpha 탐색과 같은 원리.
+    2단계 입력(feature_cols_12)으로 max_depth/n_estimators/learning_rate을
+    교차검증(AUC 최대화)으로 탐색 - 분석A의 ccp_alpha 탐색과 같은 원리.
+
+    ⚠️ learning_rate도 탐색 대상에 포함됨(이전에는 0.1로 고정) - max_depth/
+    n_estimators만 데이터가 정하고 learning_rate은 사람이 고정하는 비일관성을
+    해소. 세 파라미터 모두 같은 GridSearchCV 한 번으로 함께 탐색한다(개별
+    탐색을 순차적으로 하면 파라미터 간 상호작용을 놓칠 수 있음).
 
     이 결과를 3단계도 그대로 물려받는다(_xgboost_kwargs 참조) - 탐색은
     한 번만, 두 단계가 같은 설정을 쓴다는 원칙은 유지.
@@ -85,9 +89,9 @@ def search_xgboost_hyperparameters(
     param_grid = {
         "max_depth": config.XGBOOST_MAX_DEPTH_CANDIDATES,
         "n_estimators": config.XGBOOST_N_ESTIMATORS_CANDIDATES,
+        "learning_rate": config.XGBOOST_LEARNING_RATE_CANDIDATES,
     }
     base_model = XGBClassifier(
-        learning_rate=config.XGBOOST_LEARNING_RATE,
         eval_metric="logloss",
         random_state=config.RANDOM_STATE,
     )
@@ -98,7 +102,7 @@ def search_xgboost_hyperparameters(
     grid.fit(X_train_tree_12, y_train)
 
     cv_results = pd.DataFrame(grid.cv_results_)[
-        ["param_max_depth", "param_n_estimators", "mean_test_score", "std_test_score"]
+        ["param_max_depth", "param_n_estimators", "param_learning_rate", "mean_test_score", "std_test_score"]
     ].sort_values("mean_test_score", ascending=False)
 
     return XGBoostSearchResult(best_params=grid.best_params_, cv_results=cv_results)
@@ -115,7 +119,7 @@ def _xgboost_kwargs(search_result: XGBoostSearchResult) -> dict:
     return dict(
         max_depth=search_result.best_params["max_depth"],
         n_estimators=search_result.best_params["n_estimators"],
-        learning_rate=config.XGBOOST_LEARNING_RATE,
+        learning_rate=search_result.best_params["learning_rate"],
         eval_metric="logloss",
         random_state=config.RANDOM_STATE,
     )

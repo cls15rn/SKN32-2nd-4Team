@@ -134,7 +134,7 @@ def _tab_signal(t, pop_label):
 
 
 def render():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
 
     T.html(T.page_header("우선 대응 · 재무지표 분해",
                          "예상 손실(월 요금 × 이탈확률)을 전체 데이터와 대응 대상으로 나눠, "

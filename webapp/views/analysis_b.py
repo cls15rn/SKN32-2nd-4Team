@@ -28,9 +28,11 @@ def _type_segment_view(df, sel_label):
         "· 같은 유형이라도 생애주기 구간에 따라 이탈률이 달라짐") + bars)
 
 
-def section():
-    df, _ = D.get_scored()
-    rules = D.load_rules()
+def section(df=None, rules=None):
+    if df is None:
+        df, _ = D.get_active_df()
+    if rules is None:
+        rules = D.load_rules()
     prof = D.segment_profile(df).set_index("segment")
 
     # 유형 선택 → 그 유형의 세그먼트별 이탈률 (세그먼트별 상세 탭 위)

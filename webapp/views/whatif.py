@@ -1,5 +1,5 @@
 """
-What-If 분석 — 고객 속성을 가상으로 바꾸면 이탈 확률이 어떻게 달라지는가.
+위험 고객 맞춤 프로모션 시뮬레이터 — 고객 속성을 가상으로 바꾸면 이탈 확률이 어떻게 달라지는가.
 
 구조:
   왼쪽  · 고객 검색/선택 + 현재 프로필 카드
@@ -12,8 +12,6 @@ What-If 분석 — 고객 속성을 가상으로 바꾸면 이탈 확률이 어�
   - 세그먼트는 tenure 원본에서 자동 재산출 (변경 불가 — 분석A 정의와 일관)
 """
 from __future__ import annotations
-
-import copy
 
 import numpy as np
 import pandas as pd
@@ -105,16 +103,16 @@ EDITABLE_ATTRS = [
 
 # 범주형 속성만 (슬라이더 제외)
 CAT_ATTRS = [a for a in EDITABLE_ATTRS if a["options"] is not None]
-NUM_ATTRS = [a for a in EDITABLE_ATTRS if a["options"] is None]
+# MonthlyCharges 항목 — col 명으로 명시적 조회 (인덱스 의존 방지)
+MC_ATTR = next(a for a in EDITABLE_ATTRS if a["col"] == "MonthlyCharges")
 
 
 # ---------------------------------------------------------------------------
 # 예측 헬퍼 — 단일 행 변형 후 이탈 확률 재산출
 # ---------------------------------------------------------------------------
-def _predict_single(row_dict: dict, base_df: pd.DataFrame) -> float:
+def _predict_single(row_dict: dict) -> float:
     """
     row_dict: 원본 컬럼 값 dict (변경된 값 포함)
-    base_df:  전체 데이터프레임 (get_scored 반환값) — 인코딩 기준으로만 참조
     반환: 이탈 확률 float (0~1)
     """
     clf, feature_cols = D.get_whatif_model()
@@ -125,7 +123,7 @@ def _predict_single(row_dict: dict, base_df: pd.DataFrame) -> float:
     single = pd.DataFrame([row_dict])
 
     # 2) 원본과 동일한 전처리 적용
-    single = _preprocess_single(single, base_df, feature_cols)
+    single = _preprocess_single(single, feature_cols)
     if single is None:
         return float("nan")
 
@@ -137,29 +135,15 @@ def _predict_single(row_dict: dict, base_df: pd.DataFrame) -> float:
 
 
 def _preprocess_single(single: pd.DataFrame,
-                        base_df: pd.DataFrame,
                         feature_cols: list[str]) -> pd.DataFrame | None:
     """단일 행을 feature_cols 기준으로 전처리.
 
-    get_scored()의 base_df는 load_frame() → clean_raw_data() 이후 상태.
-    clean_raw_data()는 "No internet service" / "No phone service" → "No" 통합까지만 하고
-    이진/범주형 인코딩은 하지 않는다. 따라서 여기서 동일하게 처리해야 한다.
+    BINARY_MAP_COLS / CATEGORICAL_COLS는 D를 통해 직접 참조 (data.py가 shared/columns.py에서 import).
     """
-    try:
-        from columns import BINARY_MAP_COLS, CATEGORICAL_COLS  # type: ignore
-    except ImportError:
-        try:
-            import sys
-            from pathlib import Path
-            sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "shared"))
-            from columns import BINARY_MAP_COLS, CATEGORICAL_COLS  # type: ignore
-        except ImportError:
-            return None
-
     work = single.copy()
 
     # 이진 컬럼 매핑 (Yes/No → 1/0)
-    for col in BINARY_MAP_COLS:
+    for col in D.BINARY_MAP_COLS:
         if col in work.columns:
             work[col] = work[col].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0).astype(float)
 
@@ -168,22 +152,17 @@ def _preprocess_single(single: pd.DataFrame,
         work["SeniorCitizen"] = pd.to_numeric(work["SeniorCitizen"], errors="coerce").fillna(0)
 
     # 다중 범주형 원-핫 인코딩
-    multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS and c in work.columns]
-    if "segment" in work.columns:
-        multi_full = multi + ["segment"]
-    else:
-        multi_full = multi
+    multi = [c for c in D.CATEGORICAL_COLS if c not in D.BINARY_MAP_COLS and c in work.columns]
+    multi_full = multi + ["segment"] if "segment" in work.columns else multi
     work = pd.get_dummies(work, columns=multi_full)
 
     # feature_cols 기준으로 맞추기 (없는 컬럼 0 채움, 순서 정렬)
     for fc in feature_cols:
         if fc not in work.columns:
             work[fc] = 0
-    work = work[feature_cols]
 
     # 모든 컬럼을 float으로 변환 (bool → float 포함)
-    work = work.apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
-    return work
+    return work[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
 
 
 # ---------------------------------------------------------------------------
@@ -347,11 +326,11 @@ def _changes_summary(changes: list[dict]) -> str:
 # 메인 렌더 함수
 # ---------------------------------------------------------------------------
 def render():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
 
     T.html(T.page_header(
-        "What-If 분석",
+        "위험 고객 맞춤 프로모션 시뮬레이터",
         "고객의 속성을 가상으로 바꿨을 때 이탈 확률이 어떻게 달라지는지 시뮬레이션합니다. "
         "상담원이나 마케터가 고객별 맞춤 오퍼를 설계하는 데 활용할 수 있습니다."
     ))
@@ -367,17 +346,21 @@ def render():
         )
     fdf = df.copy()
     if seg_filter != "전체":
-        seg_idx = int(seg_filter.split("세그먼트 ")[1][0]) - 1
-        fdf = fdf[fdf["segment"] == seg_idx]
+        _seg_name_to_idx = {
+            f"{D.SEGMENT_NAMES[i]} ({D.SEGMENT_RANGES[i]})": i
+            for i in range(len(D.SEGMENT_NAMES))
+        }
+        seg_idx = _seg_name_to_idx.get(seg_filter)
+        if seg_idx is not None:
+            fdf = fdf[fdf["segment"] == seg_idx]
 
     # 이탈 위험 높은 순으로 정렬한 고객 목록
-    fdf_sorted = fdf.sort_values("이탈확률", ascending=False)
-    cid_options = fdf_sorted["customerID"].tolist()
+    fdf_sorted = fdf.sort_values("이탈확률", ascending=False).head(300)
     display_opts = [
-        f"{cid}  —  이탈 {fdf_sorted.loc[fdf_sorted.customerID==cid,'이탈확률'].values[0]*100:.0f}%  "
-        f"| {D.SEGMENT_NAMES[int(fdf_sorted.loc[fdf_sorted.customerID==cid,'segment'].values[0])]} "
-        f"| 위험신호 {int(fdf_sorted.loc[fdf_sorted.customerID==cid,'risk_count'].values[0])}개"
-        for cid in cid_options[:300]
+        f"{r.customerID}  —  이탈 {r.이탈확률*100:.0f}%  "
+        f"| {D.SEGMENT_NAMES[int(r.segment)]} "
+        f"| 위험신호 {int(r.risk_count)}개"
+        for r in fdf_sorted.itertuples(index=False)
     ]
     with col_search:
         selected_display = st.selectbox(
@@ -504,7 +487,7 @@ def render():
                 "label": "월 요금",
                 "before_kr": f"${mc_orig:.0f}",
                 "after_kr": f"${mc_new:.0f}",
-                "effect": EDITABLE_ATTRS[-1]["effect"],
+                "effect": MC_ATTR["effect"],
             })
 
         st.markdown("---")
@@ -518,7 +501,7 @@ def render():
         row_modified = row.to_dict()
         row_modified.update(cur)
 
-        new_prob = _predict_single(row_modified, df)
+        new_prob = _predict_single(row_modified)
 
         st.markdown(" ")
         T.html(_before_after_card(orig_prob, new_prob))
@@ -527,16 +510,12 @@ def render():
         if changed_attrs and not np.isnan(new_prob):
             diff_pct = (new_prob - orig_prob) * 100
             if diff_pct < -1:
-                direction = "낮아"
-                color_dir = T.GOOD
                 key_effects = " · ".join(c["effect"] for c in changed_attrs[:2])
                 summary = (
                     f"속성 변경으로 이탈 확률이 <b>{abs(diff_pct):.1f}%p 낮아집니다</b>. "
                     f"{key_effects}"
                 )
             elif diff_pct > 1:
-                direction = "높아"
-                color_dir = T.CORAL
                 summary = (
                     f"이 방향의 변경은 이탈 확률을 <b>{diff_pct:.1f}%p 높입니다</b>. "
                     f"고객 리텐션에 불리한 방향입니다."
@@ -562,8 +541,12 @@ def render():
         # ── 초기화 버튼 ────────────────────────────────────────────────
         st.markdown(" ")
         if st.button("↺ 원래 값으로 초기화", key=f"wi_reset_{selected_cid}"):
-            if state_key in st.session_state:
-                del st.session_state[state_key]
+            # state_key 삭제
+            st.session_state.pop(state_key, None)
+            # 위젯 key도 함께 삭제 — 위젯 자체 state를 지워야 화면이 원래 값으로 돌아감
+            for attr in EDITABLE_ATTRS:
+                st.session_state.pop(f"wi_{attr['col']}_{selected_cid}", None)
+            st.session_state.pop(f"wi_mc_{selected_cid}", None)
             st.rerun()
 
     # ── 하단: 전체 고객 비교 인사이트 ──────────────────────────────────────

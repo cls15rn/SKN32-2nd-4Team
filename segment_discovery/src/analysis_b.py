@@ -25,6 +25,7 @@ from sklearn.tree import DecisionTreeClassifier
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "shared"))
 from columns import ANALYSIS_B_NUMERIC_COLS, CATEGORICAL_COLS  # noqa: E402
+from stats_formulas import hanley_mcneil_se  # noqa: E402  (analysis_a 의존 제거 - 12일차 보강)
 
 # ⚠️ 컬럼 목록을 여기서 다시 정의하지 말 것 - shared/columns.py 가 단일 출처.
 # 이 NUMERIC_COLS는 churn_prediction의 스케일링 대상(SCALING_NUMERIC_COLS)과
@@ -216,10 +217,11 @@ def find_stable_bootstrap_count_for_attributes(
     max_iter: int = config.SEQUENTIAL_MAX_ITER,
     check_every: int = config.SEQUENTIAL_CHECK_EVERY,
     min_n_before_check: int = config.SEQUENTIAL_MIN_N_BEFORE_CHECK,
-    structural_gap: float = config.SEQUENTIAL_STRUCTURAL_GAP,
+    structural_gap: float | None = None,
     ceiling_patience: int = config.SEQUENTIAL_CEILING_PATIENCE,
     self_stability_window: int = config.SEQUENTIAL_SELF_STABILITY_WINDOW,
     self_stability_threshold: float = config.SEQUENTIAL_SELF_STABILITY_THRESHOLD,
+    record_observation: bool = True,
 ) -> tuple[int, float, float, float, pd.DataFrame]:
     """
     분석A의 find_stable_bootstrap_count(G안, 순차적 조기중단)와 완전히 같은
@@ -233,12 +235,17 @@ def find_stable_bootstrap_count_for_attributes(
     실행되는 것으로 확인됨 - 표본부족 위험이 큰 곳에 자동으로 더 신중한
     검증이 적용되는 바람직한 결과.
 
+    structural_gap 적응형 보정 (3번 항목, gap_calibration.py 참조)
+    ----------------------------------------------------------------
+    분석A의 find_stable_bootstrap_count와 같은 적응형 보정을 그대로
+    재사용한다 - 같은 gap_observations.csv에 분석A·B의 관측치가 함께
+    누적되므로, 더 빨리 신뢰할 만한 분位수에 도달한다. structural_gap을
+    직접 지정하면(기존 테스트 호환) 적응형 조회를 건너뛴다.
+
     Returns
     -------
     stop_n, mean_auc, ci_low, ci_high, diagnostics : find_stable_bootstrap_count와 동일한 의미
     """
-    from analysis_a import hanley_mcneil_se  # noqa: E402  (지연 import - 순환참조 방지)
-
     df_enc = _encode_categoricals(df_segment)
     X = df_enc[list(attributes)].values
     y = df_enc["ChurnFlag"].values
@@ -248,57 +255,53 @@ def find_stable_bootstrap_count_for_attributes(
     n_positive = int(y.sum())
     n_negative = n - n_positive
     se_hm = hanley_mcneil_se(point_auc, n_positive, n_negative)
+
+    if structural_gap is None:
+        from gap_calibration import adaptive_structural_gap
+        structural_gap, _gap_source = adaptive_structural_gap(n, statistic_type="auc_hanley_mcneil")
     safe_ceiling = 2 * 1.96 * se_hm * structural_gap
 
     rng = np.random.RandomState(random_state)
-    boot_aucs: list[float] = []
-    width_history: list[float] = []
-    rows = []
-    ceiling_streak = 0
-    last_ci_low, last_ci_high = float("nan"), float("nan")
 
-    for i in range(1, max_iter + 1):
+    def _measure_once() -> float | None:
         boot_idx = rng.choice(n, n, replace=True)
         oob_mask = np.ones(n, dtype=bool)
         oob_mask[np.unique(boot_idx)] = False
         oob_idx = np.where(oob_mask)[0]
 
         if len(oob_idx) < 10 or len(np.unique(y[oob_idx])) < 2 or len(np.unique(y[boot_idx])) < 2:
-            continue
+            return None
 
+        # ⚠️ max_depth=4: 분석A(find_stable_bootstrap_count, 단일 변수 segment)
+        # 와의 유일한 실질적 차이 - 분석B는 여러 속성(attributes)을 동시에
+        # 넣으므로 과적합 방지를 위해 트리 깊이를 제한한다. 멈춤 판단 로직
+        # 자체는 gap_calibration.run_sequential_bootstrap으로 공통화됨.
         model = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=random_state)
         model.fit(X[boot_idx], y[boot_idx])
         proba = model.predict_proba(X[oob_idx])[:, 1]
-        boot_aucs.append(roc_auc_score(y[oob_idx], proba))
+        return roc_auc_score(y[oob_idx], proba)
 
-        if i % check_every == 0 and len(boot_aucs) >= min_n_before_check:
-            last_ci_low, last_ci_high = np.percentile(boot_aucs, [2.5, 97.5])
-            width = last_ci_high - last_ci_low
-            width_history.append(width)
-            rows.append({"n": i, "ci_width": width})
-
-            if width <= safe_ceiling:
-                ceiling_streak += 1
-            else:
-                ceiling_streak = 0
-
-            self_stable = False
-            if len(width_history) >= self_stability_window + 1:
-                recent = width_history[-(self_stability_window + 1):]
-                rel_changes = [
-                    abs(recent[j + 1] - recent[j]) / recent[j]
-                    for j in range(len(recent) - 1) if recent[j] > 0
-                ]
-                self_stable = bool(rel_changes) and all(
-                    rc < self_stability_threshold for rc in rel_changes
-                )
-
-            if ceiling_streak >= ceiling_patience or self_stable:
-                diagnostics = pd.DataFrame(rows)
-                return i, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+    from gap_calibration import run_sequential_bootstrap
+    stop_n, boot_aucs, ci_low, ci_high, rows = run_sequential_bootstrap(
+        measurement_fn=_measure_once,
+        safe_ceiling=safe_ceiling,
+        max_iter=max_iter,
+        check_every=check_every,
+        min_n_before_check=min_n_before_check,
+        ceiling_patience=ceiling_patience,
+        self_stability_window=self_stability_window,
+        self_stability_threshold=self_stability_threshold,
+    )
 
     diagnostics = pd.DataFrame(rows)
-    return max_iter, float(np.mean(boot_aucs)), float(last_ci_low), float(last_ci_high), diagnostics
+    mean_auc = float(np.mean(boot_aucs))
+    if record_observation and np.isfinite(ci_low) and np.isfinite(ci_high):
+        from gap_calibration import record_auc_gap_observation
+        record_auc_gap_observation(
+            n=n, point_auc=point_auc, n_positive=n_positive,
+            n_negative=n_negative, ci_width=ci_high - ci_low,
+        )
+    return stop_n, mean_auc, ci_low, ci_high, diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -345,3 +348,50 @@ def run_analysis_b(
             "n_permutations_used": n_permutations_used,
         })
     return pd.DataFrame(rows)
+
+
+def extract_risk_attribute_values(
+    df_train_with_segment: pd.DataFrame, result_b: pd.DataFrame,
+) -> dict[str, str]:
+    """
+    분석B 결과(top_attributes)에서 서브트랙Q가 쓸 {속성: 위험값} 매핑을
+    자동으로 추출한다 - 코드 점검 중 발견된 정합성 버그를 해결.
+
+    ⚠️ 발견된 문제: 기존 app.py는 risk_attribute_values를 사람이 직접
+    하드코딩했는데(Contract, PaymentMethod, InternetService, OnlineSecurity,
+    TechSupport), 그중 PaymentMethod·TechSupport는 분석B의 top_attributes에
+    *단 한 번도 등장한 적이 없는* 속성이었다(과거 메모 기록·현재 실행 모두
+    확인). 메모 4.1-B는 "분석B의 검증을 그대로 물려받음, 새로 임의 선정하지
+    않음"이라고 명시하는데, 실제 코드는 그 원칙을 어기고 있었다 - 발표/인사이트
+    효과를 위해 의도적으로 추가했다는 근거도 없어(주석에도 "분석B 결과에서
+    위험값을 매핑"이라고만 적혀 있음) 정합성 버그로 판단해 수정한다.
+
+    ⚠️ 범주형 속성만 자동화 가능: top_attributes에는 연속형(MonthlyCharges
+    등)도 섞여 있는데, 연속형은 "위험값"이라는 개념 자체가 정의되지 않는다
+    (이탈률이 가장 높은 단일 값이 아니라 구간/방향의 문제) - 이 함수는
+    범주형 속성만 다루고, 연속형은 risk_attribute_values에서 제외한다
+    (서브트랙Q는 범주형 위험신호 보유개수를 세는 게 원래 설계 의도이므로,
+    연속형을 빼는 것이 오히려 원래 설계에 더 부합함).
+
+    위험값 선정 규칙: 세그먼트 내에서 해당 속성의 값별 이탈률을 계산해
+    가장 높은 값을 위험값으로 채택 - "그룹별 이탈률 최댓값"이라는 단순한
+    규칙으로 기존에 사람이 손으로 적었던 매핑(Contract=Month-to-month,
+    InternetService=Fiber optic, OnlineSecurity=No)과 정확히 일치함을
+    실측으로 확인했다.
+
+    Returns
+    -------
+    risk_attribute_values : {속성명: 위험값} - 여러 세그먼트에서 같은
+        속성이 반복 등장해도 한 번만 포함(나중 세그먼트가 덮어씀 - 위험값
+        자체는 속성에 종속적이라 세그먼트가 달라도 보통 동일하게 나옴).
+    """
+    risk_attribute_values: dict[str, str] = {}
+    for _, row in result_b.iterrows():
+        segment_id = row["segment"]
+        df_segment = df_train_with_segment[df_train_with_segment["segment"] == segment_id]
+        for attr in row["top_attributes"]:
+            if attr not in CATEGORICAL_COLS:
+                continue  # 연속형은 "위험값" 개념이 없어 자동화 대상에서 제외
+            churn_by_value = df_segment.groupby(attr)["ChurnFlag"].mean()
+            risk_attribute_values[attr] = churn_by_value.idxmax()
+    return risk_attribute_values
