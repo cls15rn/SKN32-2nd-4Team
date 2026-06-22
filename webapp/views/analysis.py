@@ -71,7 +71,7 @@ def _summary(df, rules):
 
 
 def render():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
 
     T.html(T.page_header(

@@ -29,7 +29,7 @@ def _type_segment_view(df, sel_label):
 
 
 def section():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
     prof = D.segment_profile(df).set_index("segment")
 

@@ -6,7 +6,7 @@ from lib import theme as T
 
 
 def section():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
     q = rules["subtrack_q"]
     mean_rate = df["churn"].mean()

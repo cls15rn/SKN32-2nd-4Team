@@ -637,3 +637,90 @@ def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
             "total_loss": float(sub["예상손실"].sum()),
         })
     return pd.DataFrame(rows)
+
+
+# ===========================================================================
+# 전역 데이터 소스 — session_state 기반 (CSV 업로드 공유)
+# ===========================================================================
+
+def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:
+    """
+    업로드된 원본 CSV DataFrame → (scored_df, error_msg).
+    get_scored()와 동일한 컬럼 구조를 반환.
+    오류 시 (None, 에러 메시지) 반환.
+    """
+    REQUIRED = [
+        "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
+        "tenure", "PhoneService", "MultipleLines", "InternetService",
+        "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
+        "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
+        "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
+    ]
+    missing = [c for c in REQUIRED if c not in raw.columns]
+    if missing:
+        return None, f"필수 컬럼 누락: {', '.join(missing)}"
+
+    try:
+        from data_loader import clean_raw_data  # shared/
+        df = clean_raw_data(raw.copy())
+    except Exception as e:
+        return None, f"전처리 오류: {e}"
+
+    # 세그먼트 할당
+    rules = load_rules()
+    boundaries = rules["analysis_a"]["boundaries"]
+    upper = max(df["tenure"].max(), boundaries[-1]) + 1
+    bins = [-1] + list(boundaries) + [upper]
+    df["segment"] = pd.cut(df["tenure"], bins=bins,
+                           labels=range(len(bins) - 1)).astype(int)
+    df["segment_name"] = df["segment"].map(SEGMENT_NAMES)
+
+    # risk_count
+    risk_values = rules["subtrack_q"]["risk_attribute_values"]
+    masks = pd.DataFrame(index=df.index)
+    for col, risky in risk_values.items():
+        masks[col] = (df[col] == risky).astype(int)
+    df["risk_count"] = masks.sum(axis=1)
+    df["churn"] = (df["Churn"] == "Yes").astype(int)
+
+    # 이탈확률 예측
+    try:
+        clf, feature_cols = get_whatif_model()
+        work = df.copy()
+        for col in BINARY_MAP_COLS:
+            work[col] = work[col].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0)
+        multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS]
+        enc = pd.get_dummies(work, columns=multi + ["segment"])
+        for fc in feature_cols:
+            if fc not in enc.columns:
+                enc[fc] = 0
+        X = enc[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
+        df["이탈확률"] = clf.predict_proba(X)[:, 1]
+    except Exception as e:
+        return None, f"이탈확률 예측 오류: {e}"
+
+    df["예상손실"] = df["MonthlyCharges"] * df["이탈확률"]
+    df["HighCharge"] = np.where(
+        df["MonthlyCharges"] >= df["MonthlyCharges"].quantile(HIGH_CHARGE_PCTL),
+        "High", "Low"
+    )
+    return df, ""
+
+
+def get_active_df() -> tuple[pd.DataFrame, dict]:
+    """
+    현재 활성 데이터소스를 반환.
+    - session_state["use_uploaded"] == True 이고 uploaded_df 가 있으면 업로드 데이터
+    - 그 외에는 get_scored() (기본 데이터)
+    반환: (df, meta)  — meta["source"] = "trained"/"fallback"/"uploaded"
+    """
+    try:
+        import streamlit as _st
+        use_up = _st.session_state.get("use_uploaded", False)
+        up_df  = _st.session_state.get("uploaded_df", None)
+    except Exception:
+        use_up, up_df = False, None
+
+    if use_up and up_df is not None:
+        return up_df, {"source": "uploaded", "n": len(up_df)}
+    return get_scored()

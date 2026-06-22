@@ -234,7 +234,7 @@ def _net_bars(res: pd.DataFrame) -> str:
 # 메인 렌더
 # ---------------------------------------------------------------------------
 def render():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     seg_stats = D.roi_segment_stats(df)
 
     T.html(T.page_header(

@@ -347,7 +347,7 @@ def _changes_summary(changes: list[dict]) -> str:
 # 메인 렌더 함수
 # ---------------------------------------------------------------------------
 def render():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
 
     T.html(T.page_header(

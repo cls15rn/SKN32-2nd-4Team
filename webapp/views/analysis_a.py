@@ -52,7 +52,7 @@ def _chart(curve, mean_rate, boundaries, prof):
 
 
 def section():
-    df, _ = D.get_scored()
+    df, _ = D.get_active_df()
     rules = D.load_rules()
     a = rules["analysis_a"]
     boundaries = a["boundaries"]

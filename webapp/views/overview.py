@@ -238,23 +238,124 @@ def _sel_rows(event) -> list:
             return []
 
 
-def render():
-    df, meta = D.get_scored()
+
+# ---------------------------------------------------------------------------
+# CSV 업로드 처리
+# ---------------------------------------------------------------------------
+REQUIRED_COLS = [
+    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
+    "tenure", "PhoneService", "MultipleLines", "InternetService",
+    "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
+    "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
+    "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
+]
+
+
+def _score_uploaded(raw: pd.DataFrame):
+    """업로드 CSV → scored DataFrame (get_scored와 동일한 컬럼 구조)."""
+    import numpy as np
+    from data_loader import clean_raw_data  # shared/
+
+    missing = [c for c in REQUIRED_COLS if c not in raw.columns]
+    if missing:
+        return None, f"필수 컬럼 누락: {', '.join(missing)}"
+    try:
+        df = clean_raw_data(raw.copy())
+    except Exception as e:
+        return None, f"전처리 오류: {e}"
+
+    rules = D.load_rules()
+    boundaries = rules["analysis_a"]["boundaries"]
+    upper = max(df["tenure"].max(), boundaries[-1]) + 1
+    bins = [-1] + list(boundaries) + [upper]
+    df["segment"] = pd.cut(df["tenure"], bins=bins,
+                           labels=range(len(bins) - 1)).astype(int)
+    df["segment_name"] = df["segment"].map(D.SEGMENT_NAMES)
+
+    risk_values = rules["subtrack_q"]["risk_attribute_values"]
+    masks = pd.DataFrame(index=df.index)
+    for col, risky in risk_values.items():
+        masks[col] = (df[col] == risky).astype(int)
+    df["risk_count"] = masks.sum(axis=1)
+    df["churn"] = (df["Churn"] == "Yes").astype(int)
+
+    try:
+        clf, feature_cols = D.get_whatif_model()
+        from columns import BINARY_MAP_COLS, CATEGORICAL_COLS  # shared/
+        work = df.copy()
+        for col in BINARY_MAP_COLS:
+            work[col] = work[col].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0)
+        multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS]
+        enc = pd.get_dummies(work, columns=multi + ["segment"])
+        for fc in feature_cols:
+            if fc not in enc.columns:
+                enc[fc] = 0
+        X = enc[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
+        df["이탈확률"] = clf.predict_proba(X)[:, 1]
+    except Exception as e:
+        return None, f"이탈확률 예측 오류: {e}"
+
+    df["예상손실"] = df["MonthlyCharges"] * df["이탈확률"]
+    df["HighCharge"] = np.where(
+        df["MonthlyCharges"] >= df["MonthlyCharges"].quantile(D.HIGH_CHARGE_PCTL),
+        "High", "Low"
+    )
+    return df, ""
+
+
+def _upload_panel():
+    """CSV 업로드 UI — 성공 시 scored DataFrame 반환, 아니면 None."""
+    T.html(
+        '<div style="background:#f3f6fc;border-radius:14px;padding:1.2rem 1.4rem;'
+        'margin-bottom:1rem">'
+        '<div style="font-weight:700;font-size:.95rem;margin-bottom:.5rem">'
+        '📂 새 고객 데이터 업로드</div>'
+        '<div style="font-size:.84rem;color:#667085;line-height:1.7">'
+        '원본 IBM Telco 형식의 CSV 파일을 업로드하면 동일한 대시보드로 분석합니다.<br>'
+        '필수 컬럼: customerID, tenure, MonthlyCharges, TotalCharges, Churn 포함 21개 컬럼<br>'
+        '<span style="color:#c0392b;font-weight:600">'
+        '※ 개인정보가 포함된 실제 데이터는 업로드하지 마세요.</span>'
+        '</div></div>'
+    )
+    uploaded = st.file_uploader(
+        "CSV 파일 선택", type=["csv"],
+        key="ov_csv_upload", label_visibility="collapsed",
+    )
+    if uploaded is None:
+        T.html(
+            '<div style="text-align:center;padding:2.5rem;color:#667085;font-size:.9rem">'
+            '파일을 업로드하면 이 탭에 분석 결과가 표시됩니다.</div>'
+        )
+        return None
+    try:
+        raw = pd.read_csv(uploaded)
+    except Exception as e:
+        st.error(f"CSV 읽기 실패: {e}")
+        return None
+    with st.spinner("데이터 처리 중…"):
+        df_up, err = _score_uploaded(raw)
+    if df_up is None:
+        st.error(f"⚠️ {err}")
+        return None
+    st.success(f"✅ {len(df_up):,}명 로드 완료 · 이탈확률 예측 완료")
+    return df_up
+
+
+# ---------------------------------------------------------------------------
+# 대시보드 본문 렌더 (기존 render 내용, df·meta를 인자로 받도록 분리)
+# ---------------------------------------------------------------------------
+def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
     rules = D.load_rules()
     boundaries = rules["analysis_a"]["boundaries"]
     seg_names = [D.SEGMENT_NAMES[i] for i in range(len(D.SEGMENT_NAMES))]
 
-    T.html(T.page_header(
-        "고객 이탈 예측 대시보드",
-        "통신사 가입 고객 데이터로 이탈을 예측·분석하고, 한정 예산으로 가장 효과적인 "
-        "대응 지점을 찾습니다."))
-
     main, rail = st.columns([3.3, 1], gap="large")
 
-    # ── 우측 패널 (필터·안내) — 필터값을 먼저 받는다 ──
     with rail:
-        seg_sel = st.selectbox("세그먼트 필터", ["전체"] + seg_names)
-        thr = st.slider("이탈 확률 임계값", 0.0, 1.0, 0.50, 0.05)
+        seg_sel = st.selectbox("세그먼트 필터", ["전체"] + seg_names,
+                               key=f"ov_seg_{meta.get('source','x')}")
+        thr = st.slider("이탈 확률 임계값", 0.0, 1.0, 0.50, 0.05,
+                        key=f"ov_thr_{meta.get('source','x')}")
         T.html('<div class="info-box"><div class="ib-h">서비스 활용 방법</div>'
                '<div class="ib-body">① 세그먼트·임계값으로 화면을 좁혀 보고<br>'
                '② 아래 명단에서 고객을 클릭해<br>'
@@ -267,7 +368,6 @@ def render():
 
     dff = df if seg_sel == "전체" else df[df["segment"] == seg_names.index(seg_sel)]
 
-    # ── 본문 (KPI + 차트) ──
     with main:
         s = D.overview_stats(dff)
         hr = int((dff["이탈확률"] >= thr).sum()) if "이탈확률" in dff.columns else 0
@@ -301,22 +401,19 @@ def render():
                 _tenure_line(df, dff, s["churn_rate"], boundaries, seg_sel, seg_names),
                 use_container_width=True)
 
-    # ── 손실 재무 지표 (메인, 위험요소 위, 상단 필터 적용) ──
     scope_txt = "전체 고객" if seg_sel == "전체" else seg_sel
     T.html(f'<div class="eyebrow">손실 재무 지표 — {scope_txt}</div>')
     T.html(_loss_reference(df, dff, seg_sel))
     T.html(_loss_body(dff, seg_sel))
 
-    # ── 위험 요소 · 신호 조합 (접기/펼치기, 상단 필터 적용) ──
     with st.expander("🔬 위험 요소 · 위험 신호 조합 — 펼쳐 보기 (상단 세그먼트 필터 적용)",
-                     expanded=False):
+                     expanded=False, key=f"exp_risk_{meta.get('source','x')}"):
         scope_txt = "전체 고객" if seg_sel == "전체" else seg_sel
         T.html(f'<div class="note" style="margin-bottom:.6rem">현재 보기: <b>{scope_txt}</b> · '
                '위험 요소별 이탈률과, 위험 신호가 누적될수록 이탈이 어떻게 커지는지'
                '(어떤 신호 조합이 쌓이는지)를 봅니다. 상단 세그먼트 필터로 범위가 바뀝니다.</div>')
         T.html(_risk_body(dff, rules, seg_sel, seg_names))
 
-    # ── 운영 핵심: 고위험 명단 + 인과 해설 ──
     pri = D.priority_customers(dff, top=LIST_N).reset_index(drop=True)
     disp = pd.DataFrame({
         "순위": range(1, len(pri) + 1),
@@ -327,10 +424,11 @@ def render():
         "핵심 원인": pri["핵심원인"],
     })
     with st.expander(f"🎯 예상손실 높은 순 고위험 고객 상위 {len(pri)}명 (행 클릭 → 인과 해설)",
-                     expanded=True):
+                     expanded=True, key=f"exp_pri_{meta.get('source','x')}"):
         event = st.dataframe(
             disp, hide_index=True, use_container_width=True,
             on_select="rerun", selection_mode="single-row",
+            key=f"df_pri_{meta.get('source','x')}",
             column_config={
                 "예상손실": st.column_config.NumberColumn("예상손실($/월)", format="$%d"),
                 "이탈확률": st.column_config.NumberColumn("이탈확률", format="%d%%"),
@@ -372,6 +470,23 @@ def render():
         f'<div class="note" style="margin-top:.9rem">{val}</div></div>'
     )
 
-    src = "학습된 모델(outputs/latest)" if meta["source"] == "trained" else "대시보드 자체 학습(데모)"
-    T.html(f'<div class="note">예상손실 = 월요금 × 이탈확률(현재 {src} 기준) · '
+    src_label = {
+        "trained": "학습된 모델(outputs/latest)",
+        "fallback": "대시보드 자체 학습(데모)",
+        "uploaded": "업로드 데이터 · 자체 학습 모델 적용",
+    }.get(meta.get("source", "fallback"), "대시보드 자체 학습(데모)")
+    T.html(f'<div class="note">예상손실 = 월요금 × 이탈확률(현재 {src_label} 기준) · '
            f'세그먼트·위험속성·위험신호는 순열·부트스트랩 검증 통과 · 전체 데이터 {len(df):,}건</div>')
+
+
+# ---------------------------------------------------------------------------
+# 진입점 — 탭으로 기본 데이터 / CSV 업로드 분기
+# ---------------------------------------------------------------------------
+def render():
+    T.html(T.page_header(
+        "고객 이탈 예측 대시보드",
+        "통신사 가입 고객 데이터로 이탈을 예측·분석하고, 한정 예산으로 가장 효과적인 "
+        "대응 지점을 찾습니다."))
+
+    df, meta = D.get_active_df()
+    _render_dashboard(df, meta)
