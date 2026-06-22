@@ -240,69 +240,8 @@ def _sel_rows(event) -> list:
 
 
 # ---------------------------------------------------------------------------
-# CSV 업로드 처리
+# CSV 업로드 UI — 처리 로직은 data.py의 score_uploaded_csv() 에 위임
 # ---------------------------------------------------------------------------
-REQUIRED_COLS = [
-    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
-    "tenure", "PhoneService", "MultipleLines", "InternetService",
-    "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
-    "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
-    "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
-]
-
-
-def _score_uploaded(raw: pd.DataFrame):
-    """업로드 CSV → scored DataFrame (get_scored와 동일한 컬럼 구조)."""
-    import numpy as np
-    from data_loader import clean_raw_data  # shared/
-
-    missing = [c for c in REQUIRED_COLS if c not in raw.columns]
-    if missing:
-        return None, f"필수 컬럼 누락: {', '.join(missing)}"
-    try:
-        df = clean_raw_data(raw.copy())
-    except Exception as e:
-        return None, f"전처리 오류: {e}"
-
-    rules = D.load_rules()
-    boundaries = rules["analysis_a"]["boundaries"]
-    upper = max(df["tenure"].max(), boundaries[-1]) + 1
-    bins = [-1] + list(boundaries) + [upper]
-    df["segment"] = pd.cut(df["tenure"], bins=bins,
-                           labels=range(len(bins) - 1)).astype(int)
-    df["segment_name"] = df["segment"].map(D.SEGMENT_NAMES)
-
-    risk_values = rules["subtrack_q"]["risk_attribute_values"]
-    masks = pd.DataFrame(index=df.index)
-    for col, risky in risk_values.items():
-        masks[col] = (df[col] == risky).astype(int)
-    df["risk_count"] = masks.sum(axis=1)
-    df["churn"] = (df["Churn"] == "Yes").astype(int)
-
-    try:
-        clf, feature_cols = D.get_whatif_model()
-        from columns import BINARY_MAP_COLS, CATEGORICAL_COLS  # shared/
-        work = df.copy()
-        for col in BINARY_MAP_COLS:
-            work[col] = work[col].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0)
-        multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS]
-        enc = pd.get_dummies(work, columns=multi + ["segment"])
-        for fc in feature_cols:
-            if fc not in enc.columns:
-                enc[fc] = 0
-        X = enc[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
-        df["이탈확률"] = clf.predict_proba(X)[:, 1]
-    except Exception as e:
-        return None, f"이탈확률 예측 오류: {e}"
-
-    df["예상손실"] = df["MonthlyCharges"] * df["이탈확률"]
-    df["HighCharge"] = np.where(
-        df["MonthlyCharges"] >= df["MonthlyCharges"].quantile(D.HIGH_CHARGE_PCTL),
-        "High", "Low"
-    )
-    return df, ""
-
-
 def _upload_panel():
     """CSV 업로드 UI — 성공 시 scored DataFrame 반환, 아니면 None."""
     T.html(
@@ -333,7 +272,7 @@ def _upload_panel():
         st.error(f"CSV 읽기 실패: {e}")
         return None
     with st.spinner("데이터 처리 중…"):
-        df_up, err = _score_uploaded(raw)
+        df_up, err = D.score_uploaded_csv(raw)
     if df_up is None:
         st.error(f"⚠️ {err}")
         return None

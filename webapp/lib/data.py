@@ -643,25 +643,28 @@ def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
 # 전역 데이터 소스 — session_state 기반 (CSV 업로드 공유)
 # ===========================================================================
 
+
+# 업로드 CSV 필수 컬럼 목록 (단일 출처 — 여기서만 정의)
+UPLOAD_REQUIRED_COLS = [
+    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
+    "tenure", "PhoneService", "MultipleLines", "InternetService",
+    "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
+    "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
+    "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
+]
+
+
 def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:
     """
     업로드된 원본 CSV DataFrame → (scored_df, error_msg).
     get_scored()와 동일한 컬럼 구조를 반환.
     오류 시 (None, 에러 메시지) 반환.
     """
-    REQUIRED = [
-        "customerID", "gender", "SeniorCitizen", "Partner", "Dependents",
-        "tenure", "PhoneService", "MultipleLines", "InternetService",
-        "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport",
-        "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling",
-        "PaymentMethod", "MonthlyCharges", "TotalCharges", "Churn",
-    ]
-    missing = [c for c in REQUIRED if c not in raw.columns]
+    missing = [c for c in UPLOAD_REQUIRED_COLS if c not in raw.columns]
     if missing:
         return None, f"필수 컬럼 누락: {', '.join(missing)}"
 
     try:
-        from data_loader import clean_raw_data  # shared/
         df = clean_raw_data(raw.copy())
     except Exception as e:
         return None, f"전처리 오류: {e}"

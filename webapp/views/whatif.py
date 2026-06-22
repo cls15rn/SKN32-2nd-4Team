@@ -13,8 +13,6 @@
 """
 from __future__ import annotations
 
-import copy
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -141,25 +139,14 @@ def _preprocess_single(single: pd.DataFrame,
                         feature_cols: list[str]) -> pd.DataFrame | None:
     """단일 행을 feature_cols 기준으로 전처리.
 
-    get_scored()의 base_df는 load_frame() → clean_raw_data() 이후 상태.
-    clean_raw_data()는 "No internet service" / "No phone service" → "No" 통합까지만 하고
-    이진/범주형 인코딩은 하지 않는다. 따라서 여기서 동일하게 처리해야 한다.
+    BINARY_MAP_COLS / CATEGORICAL_COLS는 data.py가 shared/columns.py에서
+    이미 import해 모듈 상수로 노출하므로 D를 통해 직접 참조한다.
+    sys.path 조작 불필요.
     """
-    try:
-        from columns import BINARY_MAP_COLS, CATEGORICAL_COLS  # type: ignore
-    except ImportError:
-        try:
-            import sys
-            from pathlib import Path
-            sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "shared"))
-            from columns import BINARY_MAP_COLS, CATEGORICAL_COLS  # type: ignore
-        except ImportError:
-            return None
-
     work = single.copy()
 
     # 이진 컬럼 매핑 (Yes/No → 1/0)
-    for col in BINARY_MAP_COLS:
+    for col in D.BINARY_MAP_COLS:
         if col in work.columns:
             work[col] = work[col].map({"Yes": 1, "No": 0, 1: 1, 0: 0}).fillna(0).astype(float)
 
@@ -168,22 +155,17 @@ def _preprocess_single(single: pd.DataFrame,
         work["SeniorCitizen"] = pd.to_numeric(work["SeniorCitizen"], errors="coerce").fillna(0)
 
     # 다중 범주형 원-핫 인코딩
-    multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS and c in work.columns]
-    if "segment" in work.columns:
-        multi_full = multi + ["segment"]
-    else:
-        multi_full = multi
+    multi = [c for c in D.CATEGORICAL_COLS if c not in D.BINARY_MAP_COLS and c in work.columns]
+    multi_full = multi + ["segment"] if "segment" in work.columns else multi
     work = pd.get_dummies(work, columns=multi_full)
 
     # feature_cols 기준으로 맞추기 (없는 컬럼 0 채움, 순서 정렬)
     for fc in feature_cols:
         if fc not in work.columns:
             work[fc] = 0
-    work = work[feature_cols]
 
     # 모든 컬럼을 float으로 변환 (bool → float 포함)
-    work = work.apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
-    return work
+    return work[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(float)
 
 
 # ---------------------------------------------------------------------------
