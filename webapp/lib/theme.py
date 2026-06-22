@@ -152,6 +152,18 @@ hr.soft {{ border:none; border-top:1px solid #eef0f6; margin:.9rem 0; }}
 .good-box .ib-h {{ font-weight:800; color:{GOOD}; margin-bottom:.45rem; font-size:.95rem; }}
 .info-box .ib-body, .good-box .ib-body {{ font-size:.84rem; line-height:1.7; color:#51607a; }}
 
+/* 전체 기준 바 (필터 무관 비교 앵커) */
+.loss-ref {{ background:#eef2fb; border:1px solid {CARD_BORDER}; border-radius:14px;
+            padding:.9rem 1.2rem; margin:.15rem 0 .9rem;
+            display:flex; flex-wrap:wrap; align-items:center; gap:.55rem 1.4rem; }}
+.loss-ref .lr-tag {{ font-weight:800; color:{MAROON}; font-size:.95rem; letter-spacing:.01em;
+                    padding-right:1rem; border-right:2px solid #d3ddf2; }}
+.loss-ref .lr-i {{ font-size:.95rem; color:{MUTED}; }}
+.loss-ref .lr-i b {{ color:{INK}; font-weight:800; font-size:1.25rem; margin-left:.2rem; }}
+.loss-ref .lr-cmp {{ width:100%; font-size:.95rem; color:{MUTED}; margin-top:.35rem;
+                    border-top:1px dashed #d3ddf2; padding-top:.55rem; }}
+.loss-ref .lr-cmp b {{ color:{MAROON}; font-weight:800; }}
+
 /* 차트 카드 제목 */
 .ch-t {{ font-weight:700; font-size:.98rem; margin:.1rem 0 .45rem; }}
 .ch-t .ch-sub {{ font-weight:400; font-size:.78rem; color:{FAINT}; }}
