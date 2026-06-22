@@ -1,27 +1,67 @@
 """
-webapp/app.py
+webapp/app.py — 가입 고객 이탈 예측 대시보드 (Streamlit 진입점)
 
-Streamlit 대시보드 진입점 (추후 구현 예정).
+실행:  streamlit run webapp/app.py
 
-segment_discovery/outputs/segment_rules.json 과
-churn_prediction/outputs/{model.pkl, predictions.csv, stage_metrics.csv}
-를 읽어다 시각화하는 용도로 채워질 자리.
+페이지(사이드바 그룹):
+  개요  · 홈 / 개요
+  실행  · 우선 대응 고객
+  분석  · 분석 A · 세그먼트 / 분석 B · 위험속성 / 서브트랙 Q · 위험신호
 
-예정 페이지 (pages/ 폴더):
-- 01_분석A_세그먼트.py   : 경계, 세그먼트단독 AUC, 순열검정/부트스트랩 결과
-- 02_분석B_위험속성.py   : 세그먼트별 위험속성, AUC, p값
-- 03_서브트랙Q.py        : risk_count 분포, K-means 보조탐색 결과
-- 04_예측모델_비교.py    : 1·2·3단계 성능지표 비교, SHAP
-- 05_고객조회.py         : customerID로 개별 고객 이탈확률/위험요인 조회
-
-실행 방법(추후): streamlit run webapp/app.py
+산출물 인터페이스:
+  segment_discovery/outputs/segment_rules.json  (경계·위험속성·검증 통계)
+  churn_prediction/outputs/latest/              (학습된 모델이 있으면 이탈확률에 사용)
+  data/WA_FnUseC_TelcoCustomerChurn.csv         (분포·집계)
 """
+import sys
+from pathlib import Path
+
 import streamlit as st
 
-st.set_page_config(page_title="고객 이탈 예측 대시보드", layout="wide")
+# webapp/ 을 import 경로에 추가 (lib, views 패키지)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-st.title("가입 고객 이탈 예측 대시보드")
-st.info(
-    "이 페이지는 추후 구현될 자리입니다. "
-    "segment_discovery 와 churn_prediction 의 산출물을 시각화할 예정입니다."
+from lib import theme as T  # noqa: E402
+from lib import data as D  # noqa: E402
+from views import overview, priority, analysis  # noqa: E402
+
+st.set_page_config(page_title="고객 이탈 예측 대시보드",
+                   page_icon="📉", layout="wide")
+T.inject()
+
+# ---- 사이드바: 브랜드 (nav 위) ----
+st.sidebar.markdown('<div class="sb-brand">이탈 예측</div>', unsafe_allow_html=True)
+
+# ---- 네비게이션 (그룹형) ----
+PG_OVERVIEW = st.Page(overview.render, title="홈 / 개요", icon="🏠",
+                      url_path="overview", default=True)
+PG_PRIORITY = st.Page(priority.render, title="우선 대응 고객", icon="🎯",
+                      url_path="priority")
+PG_ANALYSIS = st.Page(analysis.render, title="분석", icon="🧭",
+                      url_path="analysis")
+pages = {
+    "개요": [PG_OVERVIEW],
+    "실행": [PG_PRIORITY],
+    "분석": [PG_ANALYSIS],
+}
+# 홈의 진입 카드(st.page_link)가 참조할 수 있도록 Page 객체 노출
+st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS}
+nav = st.navigation(pages, position="sidebar")
+
+# ---- 사이드바: 푸터 (nav 아래) ----
+try:
+    _, meta = D.get_scored()
+    n = meta["n"]
+    src = "학습 모델(latest)" if meta["source"] == "trained" else "자체 학습(데모)"
+except Exception:
+    n, src = 7043, "—"
+st.sidebar.markdown(
+    f'<div class="sb-foot">데이터 <b>{n:,}건</b><br>'
+    f'이탈확률 <b>{src}</b><br><br>'
+    f'분석 규칙 &nbsp;<b>연 1회</b><br>'
+    f'모델 재학습 &nbsp;<b>월 1회</b><br>'
+    f'추론 &nbsp;<b>수시</b></div>',
+    unsafe_allow_html=True,
 )
+
+nav.run()
