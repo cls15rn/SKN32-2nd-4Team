@@ -43,6 +43,21 @@ def section():
             T.html(T.card(T.card_title(f"속성·범주별 이탈률 — {D.SEGMENT_NAMES[seg]} 구간")
                           + "".join(blocks)))
 
+            # 재무 축 — 이 세그먼트 안에서 위험속성별 예상손실·이탈률
+            seg_df = df[df["segment"] == seg]
+            attr = D.loss_by_risk_attribute(seg_df)
+            maxv = attr["loss"].max() or 1
+            fbars = "".join(
+                T.hbar(r["label"], r["loss"], f"${r['loss']/1000:.1f}k",
+                       meta=f"보유 {int(r['n']):,}명 · 이탈률 {r['churn']*100:.0f}%",
+                       maxpct=maxv)
+                for _, r in attr.iterrows()
+            )
+            T.html(T.card(T.card_title(
+                f"위험속성별 예상손실 — {D.SEGMENT_NAMES[seg]} 구간",
+                "같은 위험속성이라도 세그먼트마다 보유 규모·예상손실·이탈률이 다름 (막대 = 예상손실)")
+                + fbars))
+
             top = val.get("top_attributes", [])
             top_kr = ", ".join(D.RISK_LABELS.get(c, c) for c in top) if top else "—"
             T.html(f'<div class="callout">이 구간에서 분석 B가 검증한 핵심 위험속성: <b>{top_kr}</b>. '

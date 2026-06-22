@@ -182,6 +182,13 @@ hr.soft {{ border:none; border-top:1px solid #efece2; margin:.9rem 0; }}
 .layer .l-stat.warn {{ color:#9a6a1a; }}
 .layer-plus {{ display:flex; align-items:center; justify-content:center; color:{MUTED};
               font-size:1.3rem; font-weight:800; }}
+
+/* 레이어 패널 내 간단 표 (분석 B) */
+table.mini {{ width:100%; border-collapse:collapse; font-size:.84rem; margin-top:.35rem; }}
+table.mini th {{ text-align:left; color:{MUTED}; font-weight:700; padding:.38rem .5rem;
+                border-bottom:1px solid {CARD_BORDER}; }}
+table.mini td {{ padding:.38rem .5rem; border-bottom:1px solid #efe9dd; }}
+table.mini td:nth-child(3), table.mini th:nth-child(3) {{ color:{INK}; font-variant-numeric:tabular-nums; }}
 </style>
 """
 

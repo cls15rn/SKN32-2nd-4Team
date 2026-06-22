@@ -400,6 +400,21 @@ def targets(df: pd.DataFrame, prob: float = TARGET_PROB) -> pd.DataFrame:
     return df[df["이탈확률"] >= prob].copy()
 
 
+def prob_band_distribution(df: pd.DataFrame) -> pd.DataFrame:
+    """이탈확률 구간별 고객수·평균 예상손실 (미시 예측 레이어 표시용)."""
+    if "이탈확률" not in df.columns:
+        return pd.DataFrame(columns=["band", "count", "avg_loss"])
+    edges = [0, .2, .4, .6, .8, 1.01]
+    labels = ["0–20%", "20–40%", "40–60%", "60–80%", "80–100%"]
+    b = pd.cut(df["이탈확률"], bins=edges, labels=labels,
+               right=False, include_lowest=True)
+    g = (df.groupby(b, observed=False)
+           .agg(count=("이탈확률", "size"), avg_loss=("예상손실", "mean"))
+           .reset_index())
+    g.columns = ["band", "count", "avg_loss"]
+    return g
+
+
 def loss_concentration(t: pd.DataFrame, top_frac: float = 0.20) -> float:
     """상위 top_frac 고객이 차지하는 예상손실 비중."""
     if len(t) == 0:
