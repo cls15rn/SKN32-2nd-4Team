@@ -44,7 +44,7 @@ PG_ANALYSIS = st.Page(analysis.render, title="분석", icon="🧭",
                       url_path="analysis")
 PG_WHATIF = st.Page(whatif.render, title="위험 고객 맞춤 프로모션 시뮬레이터", icon="🔮",
                     url_path="whatif")
-PG_ROI = st.Page(roi.render, title="ROI 시뮬레이션", icon="💹",
+PG_ROI = st.Page(roi.render, title="이탈 방어 비용 효과 분석", icon="💹",
                  url_path="roi")
 pages = {
     "개요": [PG_OVERVIEW],
