@@ -30,7 +30,10 @@ st.set_page_config(page_title="고객 이탈 예측 대시보드",
 T.inject()
 
 # ---- 사이드바: 브랜드 (nav 위) ----
-st.sidebar.markdown('<div class="sb-brand">이탈 예측</div>', unsafe_allow_html=True)
+st.sidebar.markdown(
+    '<div class="sb-brand">👥 고객 이탈 예측'
+    '<span class="sb-sub">Customer Churn Prediction</span></div>',
+    unsafe_allow_html=True)
 
 # ---- 네비게이션 (그룹형) ----
 PG_OVERVIEW = st.Page(overview.render, title="홈 / 개요", icon="🏠",
@@ -48,20 +51,29 @@ pages = {
 st.session_state["_pages"] = {"priority": PG_PRIORITY, "analysis": PG_ANALYSIS}
 nav = st.navigation(pages, position="sidebar")
 
-# ---- 사이드바: 푸터 (nav 아래) ----
+# ---- 사이드바: 모델 요약 + 푸터 (nav 아래) ----
 try:
     _, meta = D.get_scored()
     n = meta["n"]
     src = "학습 모델(latest)" if meta["source"] == "trained" else "자체 학습(데모)"
 except Exception:
     n, src = 7043, "—"
+
 st.sidebar.markdown(
-    f'<div class="sb-foot">데이터 <b>{n:,}건</b><br>'
-    f'이탈확률 <b>{src}</b><br><br>'
-    f'분석 규칙 &nbsp;<b>연 1회</b><br>'
-    f'모델 재학습 &nbsp;<b>월 1회</b><br>'
-    f'추론 &nbsp;<b>수시</b></div>',
-    unsafe_allow_html=True,
-)
+    '<div class="sb-model">'
+    '<div class="m-h">모델 요약</div>'
+    '<div class="m-row">· Best Model <b>XGBoost</b><br>'
+    '· CV Score (F1) <b>0.727</b><br>'
+    '· 주요 Feature<br>'
+    '&nbsp;&nbsp;계약기간 · 월정액 요금<br>'
+    '&nbsp;&nbsp;기술지원 · 온라인 보안</div></div>',
+    unsafe_allow_html=True)
+
+st.sidebar.markdown(
+    f'<div class="sb-foot">데이터 <b>{n:,}건</b> · 이탈확률 <b>{src}</b><br>'
+    f'분석 규칙 <b>연 1회</b> · 모델 <b>월 1회</b> · 추론 <b>수시</b>'
+    f'<br><br>SKN32 2nd 4Team<br>'
+    f'<b>김민수 · 박지연 · 이서준 · 최예린</b></div>',
+    unsafe_allow_html=True)
 
 nav.run()
