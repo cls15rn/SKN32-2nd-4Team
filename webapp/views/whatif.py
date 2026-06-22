@@ -216,6 +216,65 @@ def _delta_html(orig: float, new: float) -> str:
     )
 
 
+def _prob_color(prob: float) -> str:
+    """이탈 확률 수준에 따른 색상 — 높을수록 위험색."""
+    if np.isnan(prob):
+        return T.MUTED
+    if prob >= 0.5:
+        return T.CORAL          # 빨강 — 고위험
+    if prob >= 0.3:
+        return "#f5a623"        # 주황 — 중위험
+    return T.GOOD               # 초록 — 저위험
+
+
+def _before_after_card(orig: float, new: float) -> str:
+    """변경 전 → 변화량 → 변경 후 3분할 카드."""
+    # 변화량 계산
+    if np.isnan(orig) or np.isnan(new):
+        diff, arrow, delta_color, delta_text = 0.0, "→", T.MUTED, "—"
+    else:
+        diff = (new - orig) * 100
+        if diff < -0.5:
+            arrow, delta_color = "▼", T.GOOD      # 감소 → 초록 (리텐션 유리)
+        elif diff > 0.5:
+            arrow, delta_color = "▲", T.CORAL     # 증가 → 빨강 (위험 상승)
+        else:
+            arrow, delta_color = "→", T.MUTED     # 변화 없음 → 회색
+        delta_text = f"{arrow} {abs(diff):.1f}%p"
+
+    orig_str = f"{orig*100:.1f}%" if not np.isnan(orig) else "—"
+    new_str  = f"{new*100:.1f}%"  if not np.isnan(new)  else "—"
+
+    orig_color = _prob_color(orig)
+    new_color  = _prob_color(new)
+
+    return (
+        f'<div class="card" style="background:#f8f9fc;border:1.5px solid #e6e9f2;padding:1.1rem 1.25rem">'
+        f'<div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.5rem">'
+
+        # 변경 전
+        f'<div style="text-align:center">'
+        f'<div style="color:#667085;font-size:.78rem;margin-bottom:.4rem;font-weight:600">변경 전</div>'
+        f'<div style="font-size:2rem;font-weight:800;color:{orig_color}">{orig_str}</div>'
+        f'</div>'
+
+        # 가운데 변화량
+        f'<div style="text-align:center;padding:0 .5rem">'
+        f'<div style="font-size:1.35rem;font-weight:800;color:{delta_color};line-height:1">{delta_text}</div>'
+        f'<div style="font-size:.72rem;color:#667085;margin-top:.3rem">변화량</div>'
+        f'</div>'
+
+        # 변경 후
+        f'<div style="text-align:center">'
+        f'<div style="color:#667085;font-size:.78rem;margin-bottom:.4rem;font-weight:600">변경 후</div>'
+        f'<div style="font-size:2rem;font-weight:800;color:{new_color}">{new_str}</div>'
+        f'</div>'
+
+        f'</div>'
+        f'</div>'
+    )
+
+
 def _profile_card(row: pd.Series, rules: dict) -> str:
     seg = int(row["segment"])
     seg_name = D.SEGMENT_NAMES.get(seg, f"세그먼트 {seg + 1}")
@@ -462,21 +521,7 @@ def render():
         new_prob = _predict_single(row_modified, df)
 
         st.markdown(" ")
-        T.html(
-            f'<div class="card" style="background:#f8f9fc;border:1.5px solid #e6e9f2">'
-            f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">'
-            f'<div>'
-            f'<div style="color:#667085;font-size:.8rem;margin-bottom:.2rem">변경 후 이탈 확률</div>'
-            f'<div>{_prob_badge(new_prob)}{_delta_html(orig_prob, new_prob)}</div>'
-            f'</div>'
-            f'<div style="text-align:right">'
-            f'<div style="color:#667085;font-size:.8rem;margin-bottom:.2rem">변경 전</div>'
-            f'<div style="font-size:1.3rem;font-weight:700;color:#667085">'
-            f'{orig_prob*100:.1f}%</div>'
-            f'</div>'
-            f'</div>'
-            f'</div>'
-        )
+        T.html(_before_after_card(orig_prob, new_prob))
 
         # ── 개입 효과 해설 ────────────────────────────────────────────
         if changed_attrs and not np.isnan(new_prob):
