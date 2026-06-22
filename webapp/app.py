@@ -72,8 +72,7 @@ st.sidebar.markdown(
 st.sidebar.markdown(
     f'<div class="sb-foot">데이터 <b>{n:,}건</b> · 이탈확률 <b>{src}</b><br>'
     f'분석 규칙 <b>연 1회</b> · 모델 <b>월 1회</b> · 추론 <b>수시</b>'
-    f'<br><br>SKN32 2nd 4Team<br>'
-    f'<b>김민수 · 박지연 · 이서준 · 최예린</b></div>',
+    f'<br><br>SKN32 2nd 4Team</div>',
     unsafe_allow_html=True)
 
 nav.run()
