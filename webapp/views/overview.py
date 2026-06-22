@@ -113,27 +113,30 @@ def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt
     return alt.layer(*extra, line, mean_rule).properties(height=250).configure_view(strokeWidth=0)
 
 
-def _segment_risk_body(df, rules, seg) -> str:
-    """세그먼트 한 칸: ① 위험 요소별 이탈률  ② 위험 신호 개수별 이탈률 + 흔한 신호 조합."""
-    seg_df = df[df["segment"] == seg]
-    val = D.segment_validation(rules, seg)
-    top = set(val.get("top_attributes", []))
+def _risk_body(scope_df, rules, seg_sel, seg_names) -> str:
+    """현재 스코프(전체 또는 선택 세그먼트)의 위험 요소별 이탈률 + 위험 신호 조합."""
+    if seg_sel == "전체":
+        top, scope_label = set(), "전체 고객"
+        sub_a = "세그먼트마다 핵심 요소가 다릅니다 — 상단에서 세그먼트를 고르면 ‘핵심’ 표시"
+    else:
+        sidx = seg_names.index(seg_sel)
+        top = set(D.segment_validation(rules, sidx).get("top_attributes", []))
+        scope_label = seg_sel
+        sub_a = "해당 요소를 가진 고객의 이탈률 · ‘핵심’ = 분석 B 검증 요소"
 
-    # ① 위험 요소별 이탈률 (세그먼트 내 보유자 기준)
-    attr = D.loss_by_risk_attribute(seg_df).sort_values("churn", ascending=False)
+    # ① 위험 요소별 이탈률
+    attr = D.loss_by_risk_attribute(scope_df).sort_values("churn", ascending=False)
     amax = (float(attr["churn"].max()) * 100) or 1.0
     abars = ""
     for _, r in attr.iterrows():
         star = ' <span class="tag sig" style="margin:0">핵심</span>' if r["attr"] in top else ""
         abars += T.hbar(f'{r["label"]}{star}', r["churn"] * 100, f'{r["churn"]*100:.0f}%',
                         meta=f'보유 {int(r["n"]):,}명', maxpct=amax)
-    card_a = T.card(T.card_title(
-        "위험 요소별 이탈률",
-        "이 세그먼트에서 해당 요소를 가진 고객의 이탈률 · ‘핵심’ = 분석 B 검증 요소") + abars)
+    card_a = T.card(T.card_title(f"위험 요소별 이탈률 — {scope_label}", sub_a) + abars)
 
-    # ② 위험 신호 조합 (risk_count, 세그먼트 내)
-    rc = D.risk_count_distribution(seg_df)
-    sig = D.risk_count_signals(seg_df, top=3)
+    # ② 위험 신호 조합 · 누적 (서브트랙 Q)
+    rc = D.risk_count_distribution(scope_df)
+    sig = D.risk_count_signals(scope_df, top=3)
     cmax = (float(rc["rate"].max()) * 100) or 1.0
     cbars = ""
     for _, r in rc.iterrows():
@@ -144,9 +147,85 @@ def _segment_risk_body(df, rules, seg) -> str:
                          meta=f'{int(r["count"]):,}명', maxpct=cmax)
                   + (f'<div style="margin:-.2rem 0 .75rem">{chips}</div>' if chips else ""))
     card_b = T.card(T.card_title(
-        "위험 신호 조합 · 누적 (서브트랙 Q)",
+        f"위험 신호 조합 · 누적 (서브트랙 Q) — {scope_label}",
         "신호가 쌓일수록 이탈률 상승 · 칩 = 그 그룹에 흔한 신호(어떤 조합이 누적되는지)") + cbars)
     return card_a + card_b
+
+
+def _loss_reference(df_full, dff, seg_sel) -> str:
+    """필터와 무관하게 항상 전체(7,043) 기준 손실 지표 — 비교 앵커."""
+    e_all = float(df_full["예상손실"].sum()) if "예상손실" in df_full.columns else 0.0
+    c_all = D.loss_concentration(df_full, 0.20)
+    s = D.overview_stats(df_full)
+    items = (
+        f'<span class="lr-i">고객 <b>{s["total"]:,}</b></span>'
+        f'<span class="lr-i">이탈률 <b>{s["churn_rate"]*100:.1f}%</b></span>'
+        f'<span class="lr-i">예상 월손실 <b>${e_all/1000:,.0f}K</b></span>'
+        f'<span class="lr-i">손실 집중도(상위20%) <b>{c_all*100:.0f}%</b></span>')
+    cmp = ""
+    if seg_sel != "전체":
+        e_seg = float(dff["예상손실"].sum()) if "예상손실" in dff.columns else 0.0
+        share = (e_seg / e_all * 100) if e_all else 0.0
+        cmp = (f'<div class="lr-cmp">현재 보기 <b>{seg_sel}</b> · 예상 월손실 '
+               f'<b>${e_seg/1000:,.0f}K</b> · 고객 <b>{len(dff):,}명</b> '
+               f'→ 전체 손실의 <b>{share:.0f}%</b></div>')
+    return f'<div class="loss-ref"><span class="lr-tag">전체 기준 · 필터 무관</span>{items}{cmp}</div>'
+
+
+def _seg_loss_card(dff) -> str:
+    """세그먼트별(생애주기) 예상손실 카드."""
+    seg = D.loss_by_segment(dff)
+    maxv = float(seg["loss"].max()) or 1.0
+    bars = "".join(
+        T.hbar(f'{r["name"]} ({r["range"]})', r["loss"], f'${r["loss"]/1000:.1f}k',
+               meta=f'{int(r["n"]):,}명', conc=f'{r["share"]*100:.0f}%', maxpct=maxv)
+        for _, r in seg.iterrows())
+    return T.card(T.card_title(
+        "세그먼트별 예상손실 (분석 A · tenure)",
+        "생애주기 구간별 예상손실 (막대=손실, 우측=비중)") + bars)
+
+
+def _attr_loss_card(dff, title_suffix="") -> str:
+    """위험 요소별 예상손실 카드."""
+    attr = D.loss_by_risk_attribute(dff)
+    maxv = float(attr["loss"].max()) or 1.0
+    bars = "".join(
+        T.hbar(r["label"], r["loss"], f'${r["loss"]/1000:.1f}k',
+               meta=f'보유 {int(r["n"]):,}명 · 이탈률 {r["churn"]*100:.0f}%', maxpct=maxv)
+        for _, r in attr.iterrows())
+    title = "위험 요소별 예상손실" + (f" — {title_suffix}" if title_suffix else " (분석 B · 유형)")
+    return T.card(T.card_title(
+        title, "위험 요소를 가진 고객의 예상손실 (막대=손실)") + bars)
+
+
+def _loss_body(dff, seg_sel) -> str:
+    """손실 재무 지표 — 예상손실(월요금×이탈확률) 총액·집중도·분해. 상단 필터 스코프 반영."""
+    exp = float(dff["예상손실"].sum()) if "예상손실" in dff.columns else 0.0
+    conc = D.loss_concentration(dff, 0.20)
+    top20 = exp * conc
+    n = len(dff)
+    avg = exp / n if n else 0.0
+
+    kpis = T.kpi_row([
+        T.kpi("예상 월손실 총액", f"${exp/1000:,.0f}K", accent=True, suffix="/월", icon="💸"),
+        T.kpi("손실 집중도", f"{conc*100:.0f}%", suffix="·상위20%", icon="🎯"),
+        T.kpi("상위 20% 손실 합", f"${top20/1000:,.0f}K", suffix="/월", icon="📊"),
+        T.kpi("고객당 평균 예상손실", f"${avg:,.1f}", suffix="/월", icon="🧾"),
+    ])
+
+    if seg_sel == "전체":
+        # 왼쪽: 세그먼트별 / 오른쪽: 위험 요소별
+        body = (
+            '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));'
+            'gap:1rem;align-items:start">'
+            f'{_seg_loss_card(dff)}{_attr_loss_card(dff)}</div>')
+    else:
+        # 단일 세그먼트: 세그먼트별 분해는 무의미 → 위험 요소별만
+        body = _attr_loss_card(dff, seg_sel)
+
+    note = ('<div class="note">예상손실 = 월요금 × 이탈확률(매출 노출 관점) · '
+            '비용·이익 데이터가 없어 매출 손실(노출) 기준만 표시합니다.</div>')
+    return kpis + body + note
 
 
 def _sel_rows(event) -> list:
@@ -191,13 +270,13 @@ def render():
     # ── 본문 (KPI + 차트) ──
     with main:
         s = D.overview_stats(dff)
-        exp_loss = float(dff["예상손실"].sum()) if "예상손실" in dff.columns else 0.0
         hr = int((dff["이탈확률"] >= thr).sum()) if "이탈확률" in dff.columns else 0
         T.html(T.kpi_row([
             T.kpi("전체 고객 수", f"{s['total']:,}", icon="👥"),
             T.kpi("이탈 고객 수", f"{s['churned']:,}", accent=True,
                   suffix=f"({s['churn_rate']*100:.1f}%)", icon="📉"),
-            T.kpi("이탈 시 월매출 노출", f"${exp_loss/1000:,.0f}K", suffix="/월", icon="💸"),
+            T.kpi("유지 고객 수", f"{s['retained']:,}",
+                  suffix=f"({(1-s['churn_rate'])*100:.1f}%)", icon="🛡️"),
             T.kpi(f"고위험(≥{thr:.0%})", f"{hr:,}", icon="⚠️"),
         ]))
 
@@ -222,15 +301,20 @@ def render():
                 _tenure_line(df, dff, s["churn_rate"], boundaries, seg_sel, seg_names),
                 use_container_width=True)
 
-    # ── 세그먼트별 위험 요소 · 신호 조합 (접기/펼치기) ──
-    with st.expander("🔬 세그먼트별 위험 요소 · 위험 신호 조합 — 펼쳐 보기", expanded=False):
-        T.html('<div class="note" style="margin-bottom:.6rem">각 세그먼트 안에서 '
+    # ── 손실 재무 지표 (메인, 위험요소 위, 상단 필터 적용) ──
+    scope_txt = "전체 고객" if seg_sel == "전체" else seg_sel
+    T.html(f'<div class="eyebrow">손실 재무 지표 — {scope_txt}</div>')
+    T.html(_loss_reference(df, dff, seg_sel))
+    T.html(_loss_body(dff, seg_sel))
+
+    # ── 위험 요소 · 신호 조합 (접기/펼치기, 상단 필터 적용) ──
+    with st.expander("🔬 위험 요소 · 위험 신호 조합 — 펼쳐 보기 (상단 세그먼트 필터 적용)",
+                     expanded=False):
+        scope_txt = "전체 고객" if seg_sel == "전체" else seg_sel
+        T.html(f'<div class="note" style="margin-bottom:.6rem">현재 보기: <b>{scope_txt}</b> · '
                '위험 요소별 이탈률과, 위험 신호가 누적될수록 이탈이 어떻게 커지는지'
-               '(어떤 신호 조합이 쌓이는지)를 봅니다.</div>')
-        seg_tabs = st.tabs([D.SEGMENT_NAMES[i] for i in range(len(seg_names))])
-        for i, tb in enumerate(seg_tabs):
-            with tb:
-                T.html(_segment_risk_body(df, rules, i))
+               '(어떤 신호 조합이 쌓이는지)를 봅니다. 상단 세그먼트 필터로 범위가 바뀝니다.</div>')
+        T.html(_risk_body(dff, rules, seg_sel, seg_names))
 
     # ── 운영 핵심: 고위험 명단 + 인과 해설 ──
     pri = D.priority_customers(dff, top=LIST_N).reset_index(drop=True)
