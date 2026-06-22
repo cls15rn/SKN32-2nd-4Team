@@ -510,3 +510,44 @@ def segment_validation(rules: dict, segment: int) -> dict:
         if item["segment"] == segment:
             return item
     return {}
+
+
+# ===========================================================================
+# What-If 분석용 — 단일 고객 재예측에 사용하는 모델과 피처 목록 반환
+# ===========================================================================
+@_cache_resource(show_spinner=False)
+def get_whatif_model():
+    """
+    What-If 분석에서 단일 행 predict_proba 호출에 쓸 (model, feature_cols) 반환.
+
+    - 학습된 모델(outputs/latest/model.pkl + feature_transformer.pkl)이 있으면 그것 사용.
+    - 없으면 get_scored()가 내부적으로 학습한 fallback 모델을 재사용.
+    반환: (classifier, feature_cols: list[str])
+    """
+    # 1) 학습된 모델 시도
+    if MODEL_PATH.exists() and TRANSFORMER_PATH.exists():
+        try:
+            import joblib
+            from feature_engineering import FeatureTransformer  # churn_prediction/src
+
+            model = joblib.load(MODEL_PATH)
+            transformer = FeatureTransformer.load(TRANSFORMER_PATH)
+            return model, transformer.feature_cols_3
+        except Exception:
+            pass
+
+    # 2) Fallback — get_scored()와 동일한 방식으로 모델 재학습 (캐시되므로 두 번 학습 안 됨)
+    df = load_frame().copy()
+    for col in BINARY_MAP_COLS:
+        df[col] = df[col].map({"Yes": 1, "No": 0})
+    multi = [c for c in CATEGORICAL_COLS if c not in BINARY_MAP_COLS]
+    enc = pd.get_dummies(df, columns=multi + ["segment"])
+
+    drop = {"customerID", "Churn", "segment_name", "churn", "risk_count"}
+    feat3 = [c for c in enc.columns if c not in drop and enc[c].dtype != object]
+    X = enc[feat3].astype(float)
+    y = (df["Churn"] == "Yes").astype(int)
+
+    clf = _fallback_classifier()
+    clf.fit(X, y)
+    return clf, feat3
