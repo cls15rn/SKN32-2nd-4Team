@@ -614,8 +614,10 @@ def get_whatif_model():
 # ===========================================================================
 
 def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    세그먼트별 ROI 시뮬레이션 기초 통계.
+    """세그먼트별 ROI 시뮬레이션 기초 통계.
+
+    캐시 미적용: df를 인자로 받으므로 호출마다 다른 데이터일 수 있음
+    (기본 데이터 / 업로드 데이터 전환 지원).
 
     반환 컬럼:
       segment, name, range,
@@ -653,9 +655,10 @@ def roi_segment_stats(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:
-    """
-    업로드된 원본 CSV DataFrame → (scored_df, error_msg).
-    get_scored()와 동일한 컬럼 구조를 반환.
+    """업로드된 원본 CSV DataFrame → (scored_df, error_msg).
+
+    캐시 미적용: 매 호출마다 새 DataFrame을 입력받으며,
+    결과는 app.py에서 session_state에 직접 저장해 재사용함.
     오류 시 (None, 에러 메시지) 반환.
     """
     missing = [c for c in UPLOAD_REQUIRED_COLS if c not in raw.columns]
@@ -709,8 +712,10 @@ def score_uploaded_csv(raw: pd.DataFrame) -> tuple[pd.DataFrame | None, str]:
 
 
 def get_active_df() -> tuple[pd.DataFrame, dict]:
-    """
-    현재 활성 데이터소스를 반환.
+    """현재 활성 데이터소스를 반환.
+
+    캐시 미적용: session_state(런타임 상태)를 읽어야 하므로
+    Streamlit 캐시 대상이 될 수 없음.
     - session_state["use_uploaded"] == True 이고 uploaded_df 가 있으면 업로드 데이터
     - 그 외에는 get_scored() (기본 데이터)
     반환: (df, meta)  — meta["source"] = "trained"/"fallback"/"uploaded"

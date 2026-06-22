@@ -13,11 +13,16 @@ import streamlit as st
 from lib import data as D
 from lib import theme as T
 
-BLUE, CORAL, MUTED, TRACK = T.MAROON, T.CORAL, T.MUTED, T.TRACK
+BLUE, CORAL, MUTED = T.MAROON, T.CORAL, T.MUTED
 LIST_N = 30
 
 
 # ---------------- 차트 ----------------
+def _seg_to_idx(seg_sel: str, seg_names: list) -> int:
+    """세그먼트 이름 → 인덱스. 없으면 0 반환."""
+    return next((i for i, n in enumerate(seg_names) if n == seg_sel), 0)
+
+
 def _donut(stats) -> alt.Chart:
     d = pd.DataFrame({"label": ["이탈", "유지"],
                       "value": [stats["churned"], stats["retained"]]})
@@ -86,7 +91,7 @@ def _tenure_line(df_full, dff, mean_rate, boundaries, seg_sel, seg_names) -> alt
             x="x:Q", y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[0, ymax])), text="t:N")
         extra, pt = [bands, labels], False
     else:
-        sidx = _seg_name_to_idx.get(seg_sel, 0)
+        sidx = _seg_to_idx(seg_sel, seg_names)
         curve = D.tenure_churn_curve(dff)
         lo, hi = seg_ranges[sidx]
         x_domain = [lo, hi]
@@ -119,7 +124,7 @@ def _risk_body(scope_df, rules, seg_sel, seg_names) -> str:
         top, scope_label = set(), "전체 고객"
         sub_a = "세그먼트마다 핵심 요소가 다릅니다 — 상단에서 세그먼트를 고르면 ‘핵심’ 표시"
     else:
-        sidx = _seg_name_to_idx.get(seg_sel, 0)
+        sidx = _seg_to_idx(seg_sel, seg_names)
         top = set(D.segment_validation(rules, sidx).get("top_attributes", []))
         scope_label = seg_sel
         sub_a = "해당 요소를 가진 고객의 이탈률 · ‘핵심’ = 분석 B 검증 요소"
@@ -246,9 +251,6 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
     rules = D.load_rules()
     boundaries = rules["analysis_a"]["boundaries"]
     seg_names = [D.SEGMENT_NAMES[i] for i in range(len(D.SEGMENT_NAMES))]
-    # 세그먼트 이름 → 인덱스 매핑 (seg_names 순서 고정에 암묵적 의존 방지)
-    _seg_name_to_idx = {name: i for i, name in enumerate(seg_names)}
-
     # 위젯 key 구분: 기본 데이터(trained/fallback) vs 업로드 데이터
     # source가 trained/fallback 둘 다 "기본 데이터"이므로 two-value로 단순화
     _key_sfx = "uploaded" if meta.get("source") == "uploaded" else "base"
@@ -270,7 +272,7 @@ def _render_dashboard(df: pd.DataFrame, meta: dict) -> None:
                '&nbsp;&nbsp;(신규=인터넷·요금, 장기=계약형태)<br>'
                '✓ 위험신호가 쌓일수록 이탈이 급증합니다</div></div>')
 
-    dff = df if seg_sel == "전체" else df[df["segment"] == _seg_name_to_idx.get(seg_sel, 0)]
+    dff = df if seg_sel == "전체" else df[df["segment"] == _seg_to_idx(seg_sel, seg_names)]
 
     with main:
         s = D.overview_stats(dff)
