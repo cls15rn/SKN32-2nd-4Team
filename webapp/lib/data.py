@@ -106,7 +106,14 @@ RISK_LABELS = {
     "HighCharge": "높은 월요금(상위 30%)",
 }
 # 핵심 원인 우선순위 (이탈 신호가 강한 순) — 한 고객이 여러 위험속성을 가질 때 무엇을 대표로 보여줄지
-RISK_PRIORITY = ["Contract", "OnlineSecurity", "TechSupport", "PaymentMethod", "InternetService"]
+# RISK_PRIORITY는 segment_rules.json의 risk_attribute_values 키 순서를 따름
+# 하드코딩 대신 동적 로드 — json이 바뀌어도 자동으로 맞춰짐
+try:
+    with open(RULES_PATH, "r", encoding="utf-8") as _f:
+        _RISK_PRIORITY = list(json.load(_f)["subtrack_q"]["risk_attribute_values"].keys())
+except Exception:
+    _RISK_PRIORITY = ["Contract", "OnlineSecurity", "TechSupport", "PaymentMethod", "InternetService"]
+RISK_PRIORITY: list[str] = _RISK_PRIORITY
 
 # 위험 신호 누적(risk_count)은 서브트랙 Q가 검증한 위 5종으로 고정.
 # 아래 '표시용' 목록은 위험 요소별 이탈률/손실 표시에 검증된 연속형 드라이버(월요금)를 더한 것.
@@ -480,6 +487,8 @@ def loss_by_risk_attribute(t: pd.DataFrame) -> pd.DataFrame:
     rv = _ext_risk_values(rules)
     rows = []
     for col in RISK_PRIORITY_DISPLAY:
+        if col not in rv or col not in t.columns:
+            continue
         held = t[t[col] == rv[col]]
         rows.append({
             "attr": "MonthlyCharges" if col == "HighCharge" else col,
@@ -501,6 +510,8 @@ def risk_attribute_by_segment(df: pd.DataFrame) -> list:
     n_seg = len(SEGMENT_NAMES)
     out = []
     for col in RISK_PRIORITY_DISPLAY:
+        if col not in rv or col not in df.columns:
+            continue
         held = df[df[col] == rv[col]]
         segs = []
         for s in range(n_seg):

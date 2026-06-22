@@ -55,10 +55,12 @@ def _summary(df, rules):
               + f'<div {line_style}>' + "<br>".join(b_lines) + "</div>")
 
     # Q — risk_count 상승 요약
-    r5 = dist[dist["risk_count"] == 5]["rate"].iloc[0] * 100
-    mult = r5 / (mean_rate * 100)
+    top_v = rules["subtrack_q"]["top_risk_count_value"]
+    _top_rows = dist[dist["risk_count"] == top_v]["rate"]
+    r_top = (_top_rows.iloc[0] * 100) if len(_top_rows) else 0.0
+    mult = r_top / (mean_rate * 100) if mean_rate else 0.0
     card_q = (T.card_title("위험신호 (Q)", "신호가 쌓일수록 이탈 급증")
-              + f'<div {line_style}>신호 0~2개 <b>3~8%</b> → 5개 <b>{r5:.0f}%</b><br>'
+              + f'<div {line_style}>신호 0~2개 <b>3~8%</b> → {top_v}개 <b>{r_top:.0f}%</b><br>'
               + f'최고위험 = 전체 평균의 <b>{mult:.1f}배</b></div>')
 
     c1, c2, c3 = st.columns(3)
