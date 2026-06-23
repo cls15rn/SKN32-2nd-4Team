@@ -68,7 +68,8 @@ def _tab_segment(t, pop_label):
     bars = "".join(
         T.hbar(f'{r["name"]} ({r["range"]})', r["loss"], f"${r['loss']/1000:.1f}k",
                meta=f"{int(r['n']):,}명", conc=f"집중도 {r['share']*100:.0f}%",
-               maxpct=seg["loss"].max())
+               maxpct=seg["loss"].max(),
+               color=T.seg_emphasis_color(int(r["segment"]), len(D.SEGMENT_NAMES)))
         for _, r in seg.iterrows()
     )
     T.html(T.card(
@@ -124,13 +125,16 @@ def _tab_signal(t, pop_label):
                      "보유 위험신호 수로 구간을 나눔 · 막대 = 손실 집중도 · 칩 = 구간 내 가장 흔한 속성")
         + "".join(blocks)))
 
-    high = sig[sig["bucket"].isin(["6개+", "5개"])]
-    if len(high):
-        share = high["share"].sum()
-        nn = int(high["n"].sum())
-        T.html(f'<div class="callout">위험신호 5개 이상 고객(약 {nn:,}명)이 '
-               f'예상 손실의 <b>{share*100:.0f}%</b>를 차지하고 이탈률도 가장 높습니다 — '
-               f'신호가 쌓일수록 위험이 커지는 구조라 최우선 타깃입니다.</div>')
+    # 최고위험 버킷(신호가 가장 많은 구간)을 동적으로 강조. sig는 신호 많은 순으로
+    # 정렬돼 sig.iloc[0]이 항상 최고위험 버킷(위 top_bucket과 동일). 위험신호 개수가
+    # 3개든 5개든 자동으로 맞춰지며, 추세("쌓일수록 상승")는 단정하지 않고 손실 집중도
+    # 사실만 제시 — 이 페이지의 우선순위 기준이 예상 손실이므로.
+    top_row = sig.iloc[0]
+    nn = int(top_row["n"])
+    share = top_row["share"]
+    T.html(f'<div class="callout">위험신호가 가장 많은 구간은 위험신호 {top_bucket} 고객'
+           f'(약 {nn:,}명)으로, 예상 손실의 <b>{share*100:.0f}%</b>를 차지합니다. '
+           f'손실 기준 우선 대응 시 먼저 살펴볼 집단입니다.</div>')
 
 
 def render():

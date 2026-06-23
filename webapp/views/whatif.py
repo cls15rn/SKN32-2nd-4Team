@@ -7,7 +7,7 @@
 
 설계 원칙 (기획구현.md 5·7번 반영):
   - 모델 재학습 없음: 저장된 모델(또는 fallback 모델)의 predict_proba만 호출
-  - 변경 가능 속성은 위험속성 5종(서브트랙Q 검증) + 계약 관련 주요 속성
+  - 변경 가능 속성은 이탈 관련 주요 범주형 속성 + 월 요금 (구체 목록은 EDITABLE_ATTRS 참조)
   - "성능이 아니라 구조를 보여준다"는 서사 — 변경 전후 SHAP-like 설명 텍스트 포함
   - 세그먼트는 tenure 원본에서 자동 재산출 (변경 불가 — 분석A 정의와 일관)
 """
@@ -418,16 +418,22 @@ def render():
 
         # ── 범주형 속성 컨트롤 ──────────────────────────────────────────
         T.html(T.card(
-            T.card_title("위험속성 변경",
-                         "검증된 위험속성 5종 + 결제/청구 관련 속성을 변경해 보세요.")
+            T.card_title("고객의 위험 속성 변경",
+                         "위험 고객들의 속성을 자유롭게 가상으로 바꿔보세요.")
         ))
         # card 내부를 st 위젯으로 채우기 위해 expander 대신 직접 배치
         changed_attrs: list[dict] = []
+        # "위험" 태그는 검증된 위험신호(segment_rules.json)에 속하면서 그 위험값을
+        # 보유한 속성에만 붙임 — 편집 가능 속성 전부가 아니라 보유 위험신호만 표시.
+        risk_signal_values = rules["subtrack_q"]["risk_attribute_values"]
         for attr in CAT_ATTRS:
             col_a, col_b = st.columns([1, 2])
             with col_a:
-                # 현재 값이 위험값인지 표시
-                is_risky = (row.get(attr["col"]) == attr.get("risk_val"))
+                # 현재 값이 '검증된 위험신호의 위험값'인지 표시
+                is_risky = (
+                    attr["col"] in risk_signal_values
+                    and row.get(attr["col"]) == risk_signal_values[attr["col"]]
+                )
                 badge = (
                     f'<span style="background:#fff0ef;color:#c0392b;border-radius:5px;'
                     f'padding:.1rem .4rem;font-size:.72rem;font-weight:700">위험</span> '

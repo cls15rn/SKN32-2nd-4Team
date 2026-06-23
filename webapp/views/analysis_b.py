@@ -17,11 +17,13 @@ def _type_segment_view(df, sel_label):
     for sc in r["segs"]:
         nm = D.SEGMENT_NAMES[sc["seg"]]
         rng = D.SEGMENT_RANGES[sc["seg"]].replace("개월", "")
+        seg_color = T.seg_emphasis_color(int(sc["seg"]), len(D.SEGMENT_NAMES))
         if sc["churn"] is None:
-            bars += T.hbar(f"{nm} ({rng})", 0, "—", meta="보유 0명", maxpct=maxv)
+            bars += T.hbar(f"{nm} ({rng})", 0, "—", meta="보유 0명", maxpct=maxv,
+                           color=seg_color)
         else:
             bars += T.hbar(f"{nm} ({rng})", sc["churn"] * 100, f"{sc['churn']*100:.0f}%",
-                           meta=f"보유 {sc['n']:,}명", maxpct=maxv)
+                           meta=f"보유 {sc['n']:,}명", maxpct=maxv, color=seg_color)
     return T.card(T.card_title(
         f"‘{sel_label}’ 유형의 세그먼트별 이탈률",
         f"이 유형 보유 고객 {r['overall_n']:,}명 · 전체 이탈률 {r['overall_churn']*100:.0f}% "
@@ -58,6 +60,9 @@ def section(df=None, rules=None):
             T.html(f'<div class="page-sub" style="margin-top:.2rem">'
                    f'고객 {int(row["count"]):,}명 · 평균 이탈 {row["rate"]*100:.0f}% · {auc_str}</div>')
 
+            # 이 탭(=세그먼트)의 강조색. 첫/마지막 세그먼트 탭이면 막대 전체를 그 색으로.
+            tab_color = T.seg_emphasis_color(int(seg), len(D.SEGMENT_NAMES))
+
             groups = D.segment_attribute_breakdown(df, seg)
             # 사용자 지정 3열 배치: 기술지원|월요금|온라인보안 / 결제수단|인터넷|계약
             order = ["기술지원", "월요금 수준", "온라인보안", "결제수단", "인터넷 종류", "계약 형태"]
@@ -69,7 +74,7 @@ def section(df=None, rules=None):
                     continue
                 bars = "".join(
                     T.hbar(r["label"], r["rate"] * 100, f"{r['rate']*100:.0f}%",
-                           meta=f"n {r['n']:,}")
+                           meta=f"n {r['n']:,}", color=tab_color)
                     for r in rows
                 )
                 blocks.append(
@@ -87,7 +92,7 @@ def section(df=None, rules=None):
             fbars = "".join(
                 T.hbar(r["label"], r["loss"], f"${r['loss']/1000:.1f}k",
                        meta=f"보유 {int(r['n']):,}명 · 이탈률 {r['churn']*100:.0f}%",
-                       maxpct=maxv)
+                       maxpct=maxv, color=tab_color)
                 for _, r in attr.iterrows()
             )
             T.html(T.card(T.card_title(

@@ -26,6 +26,24 @@ ACTIVE = "#2b4cc7"       # 활성 nav 배경(블루)
 ACTIVE_INK = "#ffffff"   # 활성 nav 텍스트
 GOOD = "#2e9e6b"
 
+# 세그먼트 강조 색 — 첫 세그먼트(최다 이탈)는 CORAL, 마지막 세그먼트(장기·고가치,
+# 이탈 시 비즈니스 타격 큼)는 딥레드로 구분. 가운데 세그먼트는 색 미지정(기본 블루).
+SEG_EMPH_FIRST = CORAL    # 첫 세그먼트 강조 (= 이탈/위험 빨강)
+SEG_EMPH_LAST = "#b3261e"  # 마지막 세그먼트 강조 (딥레드, CORAL과 명도로 구분)
+
+
+def seg_emphasis_color(seg_idx: int, n_segments: int):
+    """세그먼트 인덱스 → 강조색. 첫(0)/마지막(n-1)만 강조, 나머지는 None(기본 블루).
+
+    인덱스를 하드코딩하지 않고 n_segments로 마지막을 동적 판정 — 세그먼트 개수가
+    달라지는 데이터가 들어와도 '첫/마지막'은 항상 올바르게 잡힌다.
+    """
+    if seg_idx == 0:
+        return SEG_EMPH_FIRST
+    if seg_idx == n_segments - 1:
+        return SEG_EMPH_LAST
+    return None
+
 CSS = f"""
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
@@ -264,15 +282,20 @@ def kpi_row(cards: list[str]) -> str:
 
 
 def hbar(label: str, pct: float, right: str, meta: str = "", conc: str = "",
-         maxpct: float = 100.0) -> str:
+         maxpct: float = 100.0, color: str | None = None) -> str:
     width = max(0.0, min(100.0, pct / maxpct * 100.0))
     meta_html = f'<span class="hbar-meta">{meta}</span>' if meta else ""
     conc_html = f'<span class="conc">{conc}</span>' if conc else ""
+    # color=None이면 기존과 100% 동일(폭만 지정, CSS 기본 블루). 색이 들어오면
+    # 그 막대만 인라인 배경색으로 덮어씀 — 기존 모든 hbar 호출은 영향 없음.
+    fill_style = f"width:{width:.1f}%"
+    if color:
+        fill_style += f";background:{color}"
     return (
         '<div class="hbar"><div class="hbar-top">'
         f'<span class="hbar-label">{label}</span>{meta_html}'
         f'<span class="hbar-right">{right}{conc_html}</span></div>'
-        f'<div class="hbar-track"><div class="hbar-fill" style="width:{width:.1f}%"></div></div></div>'
+        f'<div class="hbar-track"><div class="hbar-fill" style="{fill_style}"></div></div></div>'
     )
 
 
