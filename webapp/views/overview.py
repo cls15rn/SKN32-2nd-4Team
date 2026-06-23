@@ -183,7 +183,8 @@ def _seg_loss_card(dff) -> str:
     maxv = float(seg["loss"].max()) or 1.0
     bars = "".join(
         T.hbar(f'{r["name"]} ({r["range"]})', r["loss"], f'${r["loss"]/1000:.1f}k',
-               meta=f'{int(r["n"]):,}명', conc=f'{r["share"]*100:.0f}%', maxpct=maxv)
+               meta=f'{int(r["n"]):,}명', conc=f'{r["share"]*100:.0f}%', maxpct=maxv,
+               color=T.seg_emphasis_color(int(r["segment"]), len(D.SEGMENT_NAMES)))
         for _, r in seg.iterrows())
     return T.card(T.card_title(
         "세그먼트별 예상손실 (분석 A · tenure)",

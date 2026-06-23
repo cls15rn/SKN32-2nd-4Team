@@ -13,6 +13,12 @@ def section(df=None, rules=None):
     q = rules["subtrack_q"]
     mean_rate = df["churn"].mean()
 
+    # 위험속성 개수·라벨은 segment_rules.json에서 동적으로 가져옴
+    # (하드코딩 금지 — 분석B 자동추출 결과가 바뀌면 설명도 같이 맞춰짐)
+    _risk_cols = list(q["risk_attribute_values"].keys())
+    n_risk = len(_risk_cols)
+    risk_label_str = "·".join(D.RISK_LABELS.get(c, c) for c in _risk_cols)
+
     dist = D.risk_count_distribution(df)
     signals = D.risk_count_signals(df, top=3)
     rows = []
@@ -26,7 +32,7 @@ def section(df=None, rules=None):
         rows.append(bar + chip_div)
     T.html(T.card(
         T.card_title("위험신호 개수별 이탈률 (전체 고객)",
-                     f"위험속성 5개(계약·결제·인터넷·보안·기술지원) 중 보유 개수 · 전체 평균 {mean_rate*100:.1f}%"
+                     f"위험속성 {n_risk}개({risk_label_str}) 중 보유 개수 · 전체 평균 {mean_rate*100:.1f}%"
                      " · 칩 = 그룹 내 주요 위험속성 보유율 Top 3")
         + "".join(rows)
         + '<hr class="soft">'
@@ -34,26 +40,25 @@ def section(df=None, rules=None):
           '<b>칩의 %는 그 그룹 고객 중 해당 속성을 가진 비율</b>이에요 '
           '(예: "월단위 계약 90%" = 그 그룹의 90%가 월단위 계약자). 신호 수가 많을수록 대부분 속성을 함께 보유합니다.</div>'))
 
-    # 상승 서사 callout — top_risk_count_value 기준으로 동적 산출
+    # 최고위험 구간 사실 요약 — 추세(상승/하락)는 단정하지 않고 검증된 사실만 제시.
+    # 추이 해석은 위 막대를 보고 사용자가 직접 판단하는 영역(업로드 데이터는 분포가
+    # 다를 수 있어 "쌓일수록 상승" 같은 서술을 코드가 단정하면 거짓이 될 수 있음).
     top_v = q["top_risk_count_value"]
-    _sorted = dist.sort_values("risk_count")
-    # 절반 지점(중간)과 최고위험 구간 이탈률을 동적으로 산출
-    _mid_v = max(1, top_v // 2)
     def _rate(k):
         rows = dist[dist["risk_count"] == k]["rate"]
         return rows.iloc[0] * 100 if len(rows) else None
     def _count(k):
         rows = dist[dist["risk_count"] == k]["count"]
         return int(rows.iloc[0]) if len(rows) else 0
-    r_mid  = _rate(_mid_v)
     r_top  = _rate(top_v)
     n_top  = _count(top_v)
-    if r_mid is not None and r_top is not None:
-        T.html(f'<div class="callout">신호 0~2개는 이탈 3~8%로 낮지만, <b>{_mid_v}개를 넘어서면 '
-               f'{r_mid:.0f}%→{r_top:.0f}%</b>로 가파르게 상승합니다. '
-               f'신호 {top_v}개 고객(n {n_top:,})은 '
-               f'이탈률 {r_top:.0f}%로 전체 평균의 {r_top/(mean_rate*100):.1f}배. 단, 이 상승은 신호들의 '
-               '누적 효과이지 곱셈적 시너지는 아닌 것으로 검증됐습니다(가법·곱셈 모델 비교).</div>')
+    if r_top is not None:
+        T.html(f'<div class="callout">위험신호를 가장 많이({top_v}개) 가진 고객(n {n_top:,})은 '
+               f'이탈률 {r_top:.0f}%로 전체 평균({mean_rate*100:.1f}%)의 '
+               f'<b>{r_top/(mean_rate*100):.1f}배</b>입니다. 신호 개수와 이탈의 관계는 '
+               '순열검정·부트스트랩으로 검증됐으며, 신호들의 누적 효과이지 곱셈적 시너지는 '
+               '아닌 것으로 확인됐습니다(가법·곱셈 모델 비교). '
+               '개수별 구체적 추이는 위 막대에서 직접 확인하세요.</div>')
 
     # 검증 요약
     auc = q["risk_count_only_auc"]
@@ -77,7 +82,7 @@ def section(df=None, rules=None):
         + '<hr class="soft"><div class="note">순열검정(라벨 무작위 재배열)으로 관계의 실재성을, '
           '부트스트랩으로 최고위험 구간의 안정성을 확인. K-means로 risk_count가 놓칠 수 있는 미발견 위험 조합도 보조 탐색.</div>'))
 
-    T.html('<div class="note">※ risk_count는 검증된 위험속성 5개의 보유 개수로, 해석용 지표입니다'
+    T.html('<div class="note">※ risk_count는 검증된 위험속성 ' + str(n_risk) + '개의 보유 개수로, 해석용 지표입니다'
            '(기존 변수들의 합이라 예측모델 입력으로는 증분 기여가 미미해 사용하지 않음). '
            '검증값은 segment_rules.json 기준입니다.</div>')
 
