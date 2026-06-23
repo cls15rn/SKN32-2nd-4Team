@@ -1,5 +1,5 @@
 """
-segment_discovery/app.py
+segment_discovery/run.py
 
 분석A → 분석B → 서브트랙Q 를 순서대로 실행하고, 그 결과를
 segment_rules.json 으로 저장한다.
@@ -15,7 +15,7 @@ segment_rules.json 자체가 이 스크립트의 산출물이므로, 분석A/B/Q
 
 사용법:
     cd segment_discovery
-    python app.py --data ../data/WA_FnUseC_TelcoCustomerChurn.csv
+    python run.py --data ../data/WA_FnUseC_TelcoCustomerChurn.csv
 """
 import argparse
 import json

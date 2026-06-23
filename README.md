@@ -526,7 +526,7 @@ XGBoost 하이퍼파라미터(max_depth, n_estimators, learning_rate)는 2단계
 
 9\. 결론
 
-본 시스템은 시간(분석A)·속성(분석B)·결합신호(서브트랙Q)라는 세 축을 각각 데이터 기반으로 독립 검증하고, 그 검증 과정 자체(반복횟수, 안전 마진)뿐 아니라 예측모델의 하이퍼파라미터(max_depth, n_estimators, learning_rate)까지 자동화한 결과물이다. 예측모델(3단계 XGBoost)은 ROC-AUC 0.8457, F2-score 0.7048을 달성하였으며, 세그먼트 라벨의 직접적 성능 기여는 미미하지만 이는 분석A 자체의 통계적 검증(세그먼트단독 AUC 0.7223, p=0.0000)으로 별도 입증되는 가치와 구분되는 보조 지표임을 분명히 한다. 모든 수치는 segment_discovery/app.py와 churn_prediction/train.py의 단일 실행(실행 ID 20260622_171419)으로부터 재현 가능하다.
+본 시스템은 시간(분석A)·속성(분석B)·결합신호(서브트랙Q)라는 세 축을 각각 데이터 기반으로 독립 검증하고, 그 검증 과정 자체(반복횟수, 안전 마진)뿐 아니라 예측모델의 하이퍼파라미터(max_depth, n_estimators, learning_rate)까지 자동화한 결과물이다. 예측모델(3단계 XGBoost)은 ROC-AUC 0.8457, F2-score 0.7048을 달성하였으며, 세그먼트 라벨의 직접적 성능 기여는 미미하지만 이는 분석A 자체의 통계적 검증(세그먼트단독 AUC 0.7223, p=0.0000)으로 별도 입증되는 가치와 구분되는 보조 지표임을 분명히 한다. 모든 수치는 segment_discovery/run.py와 churn_prediction/train.py의 단일 실행(실행 ID 20260622_171419)으로부터 재현 가능하다.
 
 ---
 
@@ -757,7 +757,7 @@ Customerang/  (저장소명: SKN32-2nd-4Team)
 │   │   └── gap_calibration.py  # Sequential Early Stopping 공통 루프 + structural_gap 적응형 보정
 │   ├── outputs/
 │   │   └── segment_rules.json  # ← churn_prediction이 읽는 유일한 인터페이스
-│   └── app.py                  # 진입점
+│   └── run.py                  # 진입점
 │
 ├── churn_prediction/     # 예측모델
 │   ├── src/
@@ -819,7 +819,7 @@ pip install -r requirements.txt
 
 # 1. 세그먼트/위험속성/risk_count 발견 (표본이 충분히 쌓였을 때)
 cd segment_discovery
-python app.py --data ../data/WA_FnUseC_TelcoCustomerChurn.csv
+python run.py --data ../data/WA_FnUseC_TelcoCustomerChurn.csv
 
 # 2. 예측모델 재학습 (segment_rules.json 필요) — 실행마다 outputs/versions/{시각}/에 새로 쌓이고 outputs/latest/가 갱신됨
 cd ../churn_prediction
